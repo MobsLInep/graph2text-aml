@@ -82,9 +82,15 @@ make install-gpu   # adds graph + llm + human extras
 packages are compiled against that exact pair, so install them from the matching index:
 
 ```bash
-uv pip install --find-links https://data.pyg.org/whl/torch-2.4.0+cu121.html \
-    torch-scatter==2.1.2 torch-sparse==0.6.18 torch-cluster==1.6.3
+make install-pyg   # what install-gpu already runs; shown here for clarity
+# uv pip install --find-links https://data.pyg.org/whl/torch-2.4.0+cu121.html \
+#     torch-scatter==2.1.2 torch-sparse==0.6.18 torch-cluster==1.6.3
 ```
+
+Those three packages are deliberately **not** in `uv.lock`: their PyPI sdists import
+torch at build time, so they cannot be resolved into a lockfile at all, and building them
+from source would compile against whatever CUDA the build host happens to have. See
+`DECISIONS.md` D-007.
 
 Do not upgrade torch on its own — `torch-geometric`, the companion wheels, and `vllm`
 all move with it. See `DECISIONS.md` D-005.

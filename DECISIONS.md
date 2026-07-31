@@ -20,9 +20,7 @@ Format:
 **Decision:** Use `uv` with a committed `uv.lock`.
 **Rationale:** Resolution and install are roughly an order of magnitude faster than
 poetry, which matters most in CI where we re-resolve on every push; `uv` also manages the
-Python 3.11 toolchain itself, so a clean machine needs only `uv`, and it supports
-`no-build-isolation-package`, which the `torch-scatter` / `torch-sparse` / `torch-cluster`
-sdists require because they import torch at build time.
+Python 3.11 toolchain itself, so a clean machine needs only `uv` and nothing else.
 **Consequences:** Contributors need `uv` installed. The lockfile is authoritative; CI
 runs `uv sync --frozen` and will fail rather than silently re-resolve.
 
@@ -79,3 +77,37 @@ row order, library version, and filtering code all stay fixed — three things t
 not stay fixed across fourteen phases. A committed ID list is reproducible unconditionally.
 **Consequences:** Regenerating splits is a visible diff and requires a decision entry.
 The split-construction script (Phase 2) is run deliberately, never as part of training.
+
+## D-007 — PyG companion wheels are installed outside the lockfile
+**Date:** 2026-08-01 · **Phase:** 0 · **Status:** accepted
+**Decision:** `torch-scatter`, `torch-sparse` and `torch-cluster` are **not** listed in
+the `graph` extra. `make install-pyg` installs them from
+`https://data.pyg.org/whl/torch-2.4.0+cu121.html`.
+**Rationale:** Their PyPI distributions are sdists that `import torch` in `setup.py`, so
+`uv lock` cannot resolve them at all — resolution fails with `ModuleNotFoundError: No
+module named 'torch'` regardless of `no-build-isolation-package`, because locking happens
+before any environment exists. Building them from source would also produce wheels
+compiled against whatever CUDA the build host has, which is the exact drift D-005 exists
+to prevent. The prebuilt index wheels are the only correct artifact.
+**Consequences:** `uv.lock` does not pin those three; the Makefile does, and the README
+records the index URL. When torch moves, the `PYG_WHEELS` variable in the Makefile moves
+with it. `uv sync` will not detect a stale or missing PyG install — Phase 7 should assert
+the versions at import time.
+
+## D-008 — transformers pinned to 4.45.2, driven by vllm
+**Date:** 2026-08-01 · **Phase:** 0 · **Status:** accepted
+**Decision:** `transformers==4.45.2` rather than the 4.44.2 originally intended.
+**Rationale:** `vllm==0.6.2` requires `transformers>=4.45.0`; 4.44.2 made the `llm` extra
+unsatisfiable. 4.45.2 satisfies vllm, peft 0.12.0 and trl 0.9.6 simultaneously.
+**Consequences:** The `llm` extra's version floor is set by vllm, not by our needs. If
+vllm is ever dropped from the stack, this pin can relax.
+
+## D-009 — the local pre-commit hook runs as `language: script`, not `language: system`
+**Date:** 2026-08-01 · **Phase:** 0 · **Status:** accepted
+**Decision:** `scripts/hooks/check_no_data_staged.py` carries a `python3` shebang, is
+executable, and is invoked directly.
+**Rationale:** `language: system` with `entry: python ...` fails on any machine where the
+interpreter is `python3` and no `python` alias exists — which includes a stock Ubuntu
+runner. A shebang'd script has no such dependency.
+**Consequences:** The hook script must stay executable and must not import anything
+outside the standard library, since it runs outside the project environment.
