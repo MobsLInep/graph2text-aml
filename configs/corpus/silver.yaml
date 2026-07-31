@@ -1,0 +1,15 @@
+# @package corpus
+# Tier 2: LLM rewrites of Bronze, each gated by the same verifier used at evaluation
+# time (run in reverse). A rewrite that asserts an unsupported or masked fact is
+# rejected, not repaired.
+tier: silver
+name: silver
+source_tier: bronze
+rewriter_model: null           # set per-experiment
+schema_version: ${schema_version.case_facts}
+verification:
+  enabled: true
+  max_attempts: 3
+  reject_on_unsupported_fact: true
+  reject_on_masked_fact: true  # invariant 4
+  min_fact_recall: 0.95

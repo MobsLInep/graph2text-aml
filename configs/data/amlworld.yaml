@@ -1,0 +1,36 @@
+# @package data
+name: amlworld
+substrate: synthetic
+citation: "Altman et al., NeurIPS Datasets & Benchmarks 2023"
+raw_subdir: amlworld
+
+# Invariant 4: the availability mask declares which fact families this substrate can
+# support. Generation must never assert a fact whose flag here is false.
+availability:
+  amounts: true
+  currencies: true
+  real_timestamps: true
+  bank_ids: true
+  entity_types: true
+  account_ids: true
+  typology_labels: true
+  node_features: true
+
+typologies:
+  - fan_out
+  - fan_in
+  - gather_scatter
+  - scatter_gather
+  - simple_cycle
+  - random
+  - bipartite
+  - stack
+
+# Invariant 2: splits are temporal and frozen. These name committed manifests; they are
+# never regenerated from a seed at runtime.
+split:
+  strategy: temporal
+  manifest_dir: ${paths.splits_dir}/amlworld
+  train: train.txt
+  val: val.txt
+  test: test.txt

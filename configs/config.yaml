@@ -1,0 +1,38 @@
+# Hydra composition root for Graph2Text AML.
+#
+# Nothing in src/ may hardcode a filesystem path: every root lives under `paths`
+# and is reached via cfg.paths.*. See CLAUDE.md, "Code conventions".
+
+defaults:
+  - _self_
+  - paths: default
+  - data: amlworld
+  - encoder: gat
+  - fusion: prefix
+  - generator: llama31_8b_qlora
+  - corpus: bronze
+  - eval: default
+  - experiment: debug
+  - override hydra/job_logging: default
+  - override hydra/hydra_logging: default
+
+# Global seed. Invariant 5: recorded into run_context.json by every script.
+seed: 42
+deterministic: true
+
+# Schema version of the case_facts record this run reads or writes. Invariant 3:
+# pinned here, echoed into every derived artifact.
+schema_version:
+  case_facts: "0.1.0"
+
+hydra:
+  run:
+    dir: ${paths.runs_dir}/${now:%Y-%m-%d}/${now:%H-%M-%S}_${experiment.name}
+  sweep:
+    dir: ${paths.runs_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${experiment.name}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false
+  # The fully-resolved config is written to <run_dir>/.hydra/config.yaml, and the
+  # composition trace to hydra.yaml / overrides.yaml alongside it.
+  output_subdir: .hydra

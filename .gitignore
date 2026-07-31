@@ -1,0 +1,53 @@
+# --- data and artifacts: never committed, except the directory markers ---
+# The `!.../**/` lines re-admit directories so git keeps descending and can see the
+# .gitkeep files; without them a `dir/**` rule prunes the whole subtree unread.
+/data/**
+!/data/**/
+!/data/**/.gitkeep
+/artifacts/**
+!/artifacts/**/
+!/artifacts/**/.gitkeep
+
+# --- model weights and checkpoints ---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.gguf
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# --- tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ipynb_checkpoints/
+
+# --- hydra stray outputs (real runs go to artifacts/runs) ---
+outputs/
+multirun/
+
+# --- editors / os ---
+.idea/
+.vscode/
+.DS_Store

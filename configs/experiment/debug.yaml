@@ -1,0 +1,6 @@
+# @package experiment
+name: debug
+description: "Fast smoke path: tiny subsample, no GPU, used by `make smoke`."
+limit_cases: 32
+device: cpu
+notes: ""

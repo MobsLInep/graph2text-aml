@@ -1,0 +1,11 @@
+# @package fusion
+# The technical contribution: how graph structure enters the LM embedding space.
+name: prefix
+_target_: g2t_aml.models.fusion.PrefixFusion   # implemented in Phase 8
+graph_dim: ${encoder.out_dim}
+lm_dim: 4096          # Llama-3.1-8B hidden size
+num_prefix_tokens: 16
+projector: mlp        # {linear, mlp, perceiver}
+projector_hidden: 2048
+dropout: 0.05
+layer_norm: true

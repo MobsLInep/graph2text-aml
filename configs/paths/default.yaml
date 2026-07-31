@@ -1,0 +1,23 @@
+# @package paths
+# All directory roots. `root` is resolved from the G2T_AML_ROOT environment variable
+# when set (containers, cluster jobs), otherwise from Hydra's original launch dir.
+root: ${oc.env:G2T_AML_ROOT,${hydra:runtime.cwd}}
+
+data_dir: ${paths.root}/data
+raw_dir: ${paths.data_dir}/raw
+interim_dir: ${paths.data_dir}/interim
+processed_dir: ${paths.data_dir}/processed
+
+artifacts_dir: ${paths.root}/artifacts
+checkpoints_dir: ${paths.artifacts_dir}/checkpoints
+metrics_dir: ${paths.artifacts_dir}/metrics
+figures_dir: ${paths.artifacts_dir}/figures
+runs_dir: ${paths.artifacts_dir}/runs
+
+configs_dir: ${paths.root}/configs
+schemas_dir: ${paths.root}/schemas
+docs_dir: ${paths.root}/docs
+
+# Frozen split manifests (invariant 2) are committed, so they live under the repo,
+# not under the gitignored data/ tree.
+splits_dir: ${paths.root}/schemas/splits

@@ -1,0 +1,35 @@
+# @package generator
+name: llama31_8b_qlora
+base_model: meta-llama/Llama-3.1-8B-Instruct
+max_seq_len: 4096
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: nf4
+  bnb_4bit_compute_dtype: bfloat16
+  bnb_4bit_use_double_quant: true
+
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  bias: none
+
+train:
+  epochs: 3
+  per_device_batch_size: 1
+  grad_accum_steps: 16
+  lr: 2.0e-4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  lr_scheduler: cosine
+  gradient_checkpointing: true
+  bf16: true
+
+generate:
+  max_new_tokens: 512
+  temperature: 0.2
+  top_p: 0.9
+  do_sample: true
+  num_return_sequences: 1

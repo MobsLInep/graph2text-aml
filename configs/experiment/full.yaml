@@ -1,0 +1,6 @@
+# @package experiment
+name: full
+description: "Full-scale run over the complete substrate."
+limit_cases: null
+device: cuda
+notes: ""

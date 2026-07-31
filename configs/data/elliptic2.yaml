@@ -1,0 +1,28 @@
+# @package data
+name: elliptic2
+substrate: real
+citation: "Bellei et al., KDD Workshop on Machine Learning in Finance 2024"
+raw_subdir: elliptic2
+access: gated  # requires signed access agreement; not redistributable
+
+# Invariant 4. Elliptic2 features are anonymised: there are no amounts, no currencies,
+# no wall-clock timestamps and no entity types. Any narrative asserting them is a
+# hallucination by construction, and the fact layer must mask them out.
+availability:
+  amounts: false
+  currencies: false
+  real_timestamps: false
+  bank_ids: false
+  entity_types: false
+  account_ids: true      # cluster identifiers, pseudonymous
+  typology_labels: false
+  node_features: true    # anonymised
+
+typologies: []
+
+split:
+  strategy: temporal
+  manifest_dir: ${paths.splits_dir}/elliptic2
+  train: train.txt
+  val: val.txt
+  test: test.txt

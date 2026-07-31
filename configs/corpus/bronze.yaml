@@ -1,0 +1,9 @@
+# @package corpus
+# Tier 1: deterministic templates rendered directly from the fact record. Fully
+# faithful by construction, stylistically flat. The floor the other tiers must beat.
+tier: bronze
+name: bronze
+template_pack: sar_v1
+seed: ${seed}
+schema_version: ${schema_version.case_facts}
+require_full_coverage: true    # every asserted fact must trace to a fact-record field

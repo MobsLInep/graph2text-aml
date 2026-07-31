@@ -1,0 +1,9 @@
+# @package corpus
+# Tier 3: human-authored narratives from the annotation protocol in docs/annotation/.
+# Small, held out, never used for training.
+tier: gold
+name: gold
+schema_version: ${schema_version.case_facts}
+annotation_protocol: ${paths.docs_dir}/annotation/protocol.md
+min_annotators_per_case: 2
+adjudication: required
