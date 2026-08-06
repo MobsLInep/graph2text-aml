@@ -101,6 +101,12 @@ any number here as evidence about the method.
   device, but got: cpu` only at the first `.step()`, so the failure landed mid-training.
   `torch.cuda.is_available()` is not the right test either — a host can have a working card
   while the model sits on CPU. Anyone running `make install-gpu` on a CPU-only box hit this.
+- **The GPU image's base digest corrected to the multi-arch index** (`sha256:21196d81...`).
+  It had been pinned to the `linux/arm64` per-platform manifest, so an amd64 runner pulled
+  an arm64 image and every `RUN` failed with `exec format error`.
+- **`scripts/14_verify_release.py` now scrubs `VIRTUAL_ENV` and friends** from commands run
+  inside the clean clone, and installs `--extra stats` there. A clean-clone verification
+  that resolves against the caller's environment is verifying the wrong thing.
 - Module docstrings added to `corpus/`, `models/` and `utils/` `__init__.py`.
 
 ### Licensing decisions — Phase 14 (D-098)

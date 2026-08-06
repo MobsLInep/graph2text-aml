@@ -1753,6 +1753,31 @@ a real fact-record fixture; checkpoint save/load round-trips fusion and encoder 
 prints `QUICKSTART OK` with an exact golden match. Both workflows (`ci`, `verify-release`)
 are registered and active.
 
+### The first real CI run failed, and found three more defects
+
+**This is the point of scheduling it.** Every one of these passed locally and failed on a
+clean runner, for reasons that could only appear there.
+
+1. **The GPU image pinned the wrong digest — an arm64 per-platform manifest instead of the
+   multi-arch index.** `docker buildx imagetools inspect` prints the index digest on its
+   `Digest:` line and then lists the per-platform digests underneath; the first of those is
+   `linux/arm64`. The amd64 runner pulled an arm64 image and every `RUN` died with
+   `exec /bin/sh: exec format error`. The local build had never caught it because this host
+   pulls the platform it needs. Correct index digest: `sha256:21196d81...`.
+2. **`documented-commands` failed on `make test`, because the verification inherited
+   `VIRTUAL_ENV`** from the CI job. uv saw it disagree with the clone's own project
+   environment, warned *"does not match the project environment path"* and refused. A
+   clean-clone verification that resolves against the caller's environment is verifying the
+   wrong thing, so `run()` now strips `VIRTUAL_ENV`, `UV_PROJECT_ENVIRONMENT`, `PYTHONPATH`,
+   `PYTHONHOME` and the conda pointers. Invisible locally because a developer shell and a
+   CI job export different subsets of those.
+3. **The clean clone installed without `--extra stats`,** so `make test` — which this phase
+   had just added to the documented-commands list — had no scipy. `check_install` now
+   matches what CI and the CPU image do.
+
+**The CPU image job passed on the first run**, including its build-time quickstart, so the
+image and the packaging were right; the failures were in the GPU pin and in this script.
+
 ### Acceptance criteria — the Phase 9 gate
 
 | Criterion | Status |

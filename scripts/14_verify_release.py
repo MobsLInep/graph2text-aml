@@ -74,6 +74,23 @@ DOCUMENTED_COMMANDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 #: the raw data all live outside git; a file over the line means one of them leaked in.
 MAX_TRACKED_BYTES = 1_000_000
 
+#: Stripped from the environment of every command run inside the clean clone. These point
+#: at the *caller's* virtualenv, and a clean-clone verification that resolves against the
+#: caller's environment is verifying the wrong thing. uv is explicit about it: it warns
+#: "does not match the project environment path `.venv` and will be ignored" and then
+#: fails. Caught by the first real CI run, never locally, because a developer shell and a
+#: CI job export different subsets of these.
+INHERITED_ENV_TO_DROP = frozenset(
+    {
+        "VIRTUAL_ENV",
+        "UV_PROJECT_ENVIRONMENT",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "CONDA_PREFIX",
+        "CONDA_DEFAULT_ENV",
+    }
+)
+
 #: Written into the clone by the `install` check, not by git. Scanning them would report
 #: polars' 100 MB shared object as a leaked artifact, which is the check crying wolf at
 #: its own side effect.
@@ -137,6 +154,14 @@ class Check:
 def run(argv: list[str] | tuple[str, ...], cwd: Path, timeout: int = 1800) -> tuple[int, str]:
     """Run a command and capture its combined output.
 
+    The environment is scrubbed of the caller's virtualenv pointers. Without that,
+    ``make test`` inside the clean clone inherits ``VIRTUAL_ENV`` from whatever shell or CI
+    job launched the verification, uv sees it disagree with the clone's own project
+    environment, warns *"does not match the project environment path"* and ignores it --
+    and the check then fails for a reason that has nothing to do with the release. It is
+    also the exact opposite of what a clean-clone verification is for: the command must run
+    against the clone's environment, never the caller's.
+
     Args:
         argv: The command.
         cwd: Working directory.
@@ -145,6 +170,8 @@ def run(argv: list[str] | tuple[str, ...], cwd: Path, timeout: int = 1800) -> tu
     Returns:
         ``(returncode, combined output)``. A timeout returns code 124.
     """
+    env = {k: v for k, v in os.environ.items() if k not in INHERITED_ENV_TO_DROP}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     try:
         proc = subprocess.run(
             list(argv),
@@ -152,7 +179,7 @@ def run(argv: list[str] | tuple[str, ...], cwd: Path, timeout: int = 1800) -> tu
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            env=env,
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -219,6 +246,12 @@ def make_clean_clone(dest: Path) -> tuple[bool, str]:
 def check_install(clone: Path) -> tuple[bool, str]:
     """Install the light environment in the clean clone from the lockfile.
 
+    ``--extra stats`` matches what `make install-stats`, CI and the CPU image do. It is
+    scipy/statsmodels/krippendorff and pulls no torch, and `make test` -- a documented
+    command this script then runs -- needs it. Installing without it made the
+    `documented-commands` check fail for a reason that was about this script rather than
+    about the release.
+
     Args:
         clone: The clean-clone directory.
 
@@ -227,10 +260,11 @@ def check_install(clone: Path) -> tuple[bool, str]:
     """
     if shutil.which("uv") is None:
         return False, "uv not on PATH"
-    code, out = run(["uv", "sync", "--frozen", "--group", "dev"], clone, timeout=1800)
+    argv = ["uv", "sync", "--frozen", "--group", "dev", "--extra", "stats"]
+    code, out = run(argv, clone, timeout=1800)
     if code != 0:
-        return False, f"uv sync --frozen exited {code}: {out.strip()[-400:]}"
-    return True, "uv sync --frozen --group dev"
+        return False, f"{' '.join(argv)} exited {code}: {out.strip()[-400:]}"
+    return True, " ".join(argv[1:])
 
 
 def check_quickstart(clone: Path, python: str) -> tuple[bool, str]:

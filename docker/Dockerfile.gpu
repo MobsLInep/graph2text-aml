@@ -24,7 +24,12 @@
 # Do not upgrade torch on its own. torch-geometric, the three companion wheels and vllm
 # all move with it (D-005).
 
-FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04@sha256:eef662e5e56afc7bd9ac1bb9f3c1cb8959d4a6002e7a305374dc14237ca9e73f AS base
+# The digest below is the **multi-arch index**, not a per-platform manifest. Pinning a
+# per-platform digest is a trap: `docker buildx imagetools inspect` prints the index digest
+# on its `Digest:` line and then lists the per-platform ones underneath, and taking the
+# first of those pins linux/arm64. An amd64 runner then pulls an arm64 image and every
+# `RUN` dies with `exec /bin/sh: exec format error`. This was pinned wrong and CI caught it.
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04@sha256:21196d81f56b48dbee70494d5f10322e1a77cc47ffe202a3bf68eab81533c20f AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
