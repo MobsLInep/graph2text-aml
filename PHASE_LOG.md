@@ -1790,6 +1790,19 @@ image and the packaging were right; the failures were in the GPU image and in th
 — which had never been built anywhere before this phase, because the GPU path used to be
 four commented-out lines inside the CPU Dockerfile.
 
+**Final CI state, on commit `a3217f0`:**
+
+| Workflow / job | Result |
+|---|---|
+| `ci` — lint, typecheck, full suite, e2e smoke | **success** |
+| `verify-release` — clean clone + install + quickstart | **success** |
+| `verify-release` — CPU image builds and runs the quickstart | **success** |
+| `verify-release` — GPU image builds | **success** |
+
+`ci` had never executed once in this project's history before today, because the repository
+had no remote. It went green on its first real run and has stayed green through three
+rounds of fixes.
+
 ### Acceptance criteria — the Phase 9 gate
 
 | Criterion | Status |
@@ -2902,7 +2915,7 @@ optimiser bug only because the relock forced a full resync.
 | Model and dataset cards written | **met** |
 | Ethics statement complete | **met** |
 | `RESULTS.md` includes every number including nulls | **met** — and two dashes were replaced with the numbers they were hiding |
-| Verification script green in CI | **met** locally (9/9) and wired; both workflows are registered and active. **The first scheduled run fires on the next Monday 04:00 UTC**, so no CI run has completed yet. |
+| Verification script green in CI | **met.** `ci` and `verify-release` both **green on `a3217f0`**; all three `verify-release` jobs (clean-clone, CPU image, GPU image) pass on a clean runner. It took three rounds — see below. |
 | Docker image builds and runs | **met** |
 | Secret scan over full git history clean | **met** |
 | **LoRA adapters / fusion projector / GAT checkpoints to HuggingFace** | **partially NOT MET.** The GAT checkpoints exist and are packaged; **the adapters and the projector do not exist**, and nothing was uploaded to the Hub. |
