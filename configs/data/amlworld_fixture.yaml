@@ -1,0 +1,16 @@
+# @package data
+# The 500-row AMLworld fixture slice. Exists so scripts/01_ingest.py can be exercised
+# end-to-end in tests without the 475 MB release. It is a genuine slice of HI-Small, so it
+# carries the real schema -- but its statistics cannot and must not match the published
+# figures, which is why it is a separate substrate rather than an override on `amlworld`.
+defaults:
+  - amlworld
+
+name: amlworld_fixture
+registry_key: amlworld_fixture
+interim_name: amlworld_hi_small
+
+# A 500-row slice cannot reproduce the published figures, so the check is off. The
+# comparison table is still computed and written into the statistics report, where it
+# plainly shows the mismatch -- the check is disabled, not the reporting.
+verify_published: false

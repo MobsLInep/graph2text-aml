@@ -4,17 +4,38 @@ substrate: synthetic
 citation: "Altman et al., NeurIPS Datasets & Benchmarks 2023"
 raw_subdir: amlworld
 
+# Registry key in src/g2t_aml/data/download.py, and the variant to ingest.
+registry_key: amlworld_hi_small
+size: HI-Small
+interim_name: amlworld_hi_small
+
+# Abort the ingest if the observed node/edge/typology counts disagree with the figures
+# published by Altman et al. Only the complete, checksum-verified release can satisfy
+# this, which is exactly why it is on for the real substrate and off for the fixture.
+verify_published: true
+
 # Invariant 4: the availability mask declares which fact families this substrate can
 # support. Generation must never assert a fact whose flag here is false.
+#
+# Two flags were corrected in Phase 1 after reading the actual CSV header (both were
+# optimistic in the Phase 0 scaffold, written before any data was on disk):
+#   entity_types  - the schema carries a bank code and nothing else about an account.
+#                   There is no business-type column, so no "mixer" or "exchange" label
+#                   can ever be asserted.
+#   node_features - AMLworld ships no node table at all. Our node attributes are
+#                   aggregates we derive from the transactions; there are no supplied
+#                   feature columns with published semantics.
+# This mask is the projection of AMLWORLD_AVAILABILITY in src/g2t_aml/data/canonical.py;
+# tests/unit/test_availability.py asserts the two agree.
 availability:
   amounts: true
   currencies: true
   real_timestamps: true
   bank_ids: true
-  entity_types: true
+  entity_types: false
   account_ids: true
   typology_labels: true
-  node_features: true
+  node_features: false
 
 typologies:
   - fan_out

@@ -1,0 +1,19 @@
+# @package _global_
+# B6 -- the untuned floor. Llama-3.1-8B-Instruct, zero-shot, same prompt as B3.
+# The B6 -> B7 delta is exactly what QLoRA bought, because nothing else differs.
+experiment:
+  name: matrix_b6
+  description: "Phase 11 B6: Llama-3.1-8B-Instruct zero-shot on serialised facts."
+  arm: B6
+  device: cuda
+  limit_cases: null
+  notes: "Inference only; no training. Same prompt file as B3, B4 and B5."
+
+baseline:
+  provider: local
+  model: meta-llama/Llama-3.1-8B-Instruct
+  model_release_date: "2024-07-23"
+  max_output_tokens: 512
+  do_sample: false
+  min_words: 130
+  max_words: 260

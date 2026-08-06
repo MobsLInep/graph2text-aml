@@ -1,0 +1,297 @@
+{
+  "availability": {
+    "absolute_timestamps": true,
+    "currencies": true,
+    "entity_types": false,
+    "fine_temporal_resolution": true,
+    "institution_identity": true,
+    "monetary_amounts": true,
+    "node_labels": true,
+    "semantic_node_features": false,
+    "typology_ground_truth": true
+  },
+  "case_id": "fixture-cycle",
+  "dataset": "amlworld_hi_small",
+  "entity_inventory": {
+    "focal_id": "001|80000000",
+    "node_ids": [
+      "001|80000000",
+      "001|80000001",
+      "001|80000002",
+      "001|80000003"
+    ]
+  },
+  "extractor_version": "0.1.0",
+  "flow": {
+    "cross_border": {
+      "available": false,
+      "reason": "no_substrate_carries_jurisdiction"
+    },
+    "cross_institution": false,
+    "currencies_involved": [
+      "US Dollar"
+    ],
+    "inflow_by_currency": [
+      {
+        "currency": "US Dollar",
+        "n_transfers": 1,
+        "value": 1000.0
+      }
+    ],
+    "max_single_transfer": {
+      "currency": "US Dollar",
+      "value": 1000.0
+    },
+    "n_distinct_banks": 1,
+    "n_transfers_near_threshold": 0,
+    "outflow_by_currency": [
+      {
+        "currency": "US Dollar",
+        "n_transfers": 1,
+        "value": 1000.0
+      }
+    ],
+    "payment_formats": [
+      "Wire"
+    ],
+    "retained": {
+      "currency": "US Dollar",
+      "value": 0.0
+    },
+    "threshold_band_fraction": 0.1,
+    "threshold_currency": "US Dollar",
+    "threshold_reference": 10000.0,
+    "total_inflow": {
+      "currency": "US Dollar",
+      "value": 1000.0
+    },
+    "total_outflow": {
+      "currency": "US Dollar",
+      "value": 1000.0
+    }
+  },
+  "focal_entity": {
+    "first_seen": "2022-09-03T12:00:00",
+    "id": "001|80000000",
+    "in_degree": 1,
+    "last_seen": "2022-09-03T15:00:00",
+    "n_transactions_in": 1,
+    "n_transactions_out": 1,
+    "out_degree": 1,
+    "role": "pass_through",
+    "selection_rule": "extraction_seed"
+  },
+  "labels": {
+    "focal_is_illicit": true,
+    "illicit_inflow_share": 1.0,
+    "min_hops_to_known_illicit": 0,
+    "n_counterparties": 2,
+    "n_illicit_counterparties": 2,
+    "n_illicit_transactions": 4,
+    "n_licit_counterparties": 0,
+    "n_unknown_counterparties": 0
+  },
+  "model_signal": {
+    "gnn_risk_score": null,
+    "model_version": null,
+    "score_percentile": null,
+    "top_contributing_nodes": []
+  },
+  "motifs": {
+    "bipartite": {
+      "left_size": 2,
+      "present": true,
+      "right_size": 2,
+      "score": 1.0
+    },
+    "chain": {
+      "max_length": 3,
+      "present": true
+    },
+    "cycle": {
+      "length": 4,
+      "present": true
+    },
+    "fan_in": {
+      "hub": null,
+      "present": false,
+      "width": null,
+      "window_hours": null
+    },
+    "fan_out": {
+      "hub": null,
+      "present": false,
+      "width": null,
+      "window_hours": null
+    },
+    "gather_scatter": {
+      "gather_width": null,
+      "hub": null,
+      "present": false,
+      "scatter_width": null
+    },
+    "scatter_gather": {
+      "destination": null,
+      "origin": null,
+      "present": false,
+      "width": null
+    },
+    "stack": {
+      "depth": null,
+      "layer_widths": null,
+      "present": false
+    }
+  },
+  "provenance": {
+    "case_extraction": {
+      "extraction_method": "constructed",
+      "seed_node": "001|80000000"
+    },
+    "computed_at": "2026-08-01T12:00:00",
+    "config": {
+      "bipartite_min_side": 2,
+      "burst_min_transactions": 5,
+      "burst_window_hours": 24.0,
+      "chain_min_length": 3,
+      "consolidation_min_gap_hours": 1.0,
+      "cycle_edge_budget": 2000,
+      "cycle_max_length": 8,
+      "cycle_min_length": 3,
+      "fan_min_width": 3,
+      "hub_min_degree": 5,
+      "max_inventory_nodes": 1000,
+      "path_node_budget": 40,
+      "stack_min_depth": 3,
+      "stack_min_layer_width": 2,
+      "threshold_band_fraction": 0.1,
+      "threshold_currency": "US Dollar",
+      "threshold_reference": 10000.0,
+      "tolerance": {
+        "counts_exact": true,
+        "duration_granularity_units": 1.0,
+        "monetary_absolute_floor": 0.01,
+        "monetary_relative": 0.01,
+        "score_absolute": 0.01,
+        "share_absolute": 0.01
+      },
+      "two_sided_min_width": 2
+    },
+    "field_producers": {
+      "entity_inventory.focal_id": "extractor.focal_selection",
+      "entity_inventory.node_ids": "extractor.node_inventory",
+      "flow.cross_border": "flow.jurisdiction_unavailable",
+      "flow.cross_institution": "flow.distinct_bank_count",
+      "flow.currencies_involved": "flow.currency_inventory",
+      "flow.inflow_by_currency": "flow.per_currency_breakdown",
+      "flow.max_single_transfer": "flow.single_currency_maximum",
+      "flow.n_distinct_banks": "flow.distinct_bank_count",
+      "flow.n_transfers_near_threshold": "flow.threshold_band_count",
+      "flow.outflow_by_currency": "flow.per_currency_breakdown",
+      "flow.payment_formats": "flow.format_inventory",
+      "flow.retained": "flow.inflow_minus_outflow",
+      "flow.threshold_band_fraction": "flow.config_constant",
+      "flow.threshold_currency": "flow.config_constant",
+      "flow.threshold_reference": "flow.config_constant",
+      "flow.total_inflow": "flow.single_currency_aggregate",
+      "flow.total_outflow": "flow.single_currency_aggregate",
+      "focal_entity.first_seen": "extractor.focal_activity_span",
+      "focal_entity.id": "extractor.focal_selection",
+      "focal_entity.in_degree": "extractor.in_case_distinct_degree",
+      "focal_entity.last_seen": "extractor.focal_activity_span",
+      "focal_entity.n_transactions_in": "extractor.in_case_transaction_count",
+      "focal_entity.n_transactions_out": "extractor.in_case_transaction_count",
+      "focal_entity.out_degree": "extractor.in_case_distinct_degree",
+      "focal_entity.role": "extractor.role_from_in_case_degree",
+      "focal_entity.selection_rule": "extractor.focal_selection",
+      "labels.focal_is_illicit": "labels.node_label_derivation",
+      "labels.illicit_inflow_share": "labels.flagged_inflow_value_share",
+      "labels.min_hops_to_known_illicit": "labels.bfs_to_nearest_illicit",
+      "labels.n_counterparties": "labels.counterparty_classification",
+      "labels.n_illicit_counterparties": "labels.counterparty_classification",
+      "labels.n_illicit_transactions": "labels.flagged_transaction_count",
+      "labels.n_licit_counterparties": "labels.counterparty_classification",
+      "labels.n_unknown_counterparties": "labels.counterparty_classification",
+      "motifs.bipartite.left_size": "motifs.two_colouring",
+      "motifs.bipartite.present": "motifs.two_colouring",
+      "motifs.bipartite.right_size": "motifs.two_colouring",
+      "motifs.bipartite.score": "motifs.two_colouring",
+      "motifs.chain.max_length": "motifs.longest_simple_path",
+      "motifs.chain.present": "motifs.longest_simple_path",
+      "motifs.cycle.length": "motifs.shortest_directed_cycle",
+      "motifs.cycle.present": "motifs.shortest_directed_cycle",
+      "motifs.fan_in.hub": "motifs.widest_in_star",
+      "motifs.fan_in.present": "motifs.widest_in_star",
+      "motifs.fan_in.width": "motifs.widest_in_star",
+      "motifs.fan_in.window_hours": "motifs.widest_in_star",
+      "motifs.fan_out.hub": "motifs.widest_out_star",
+      "motifs.fan_out.present": "motifs.widest_out_star",
+      "motifs.fan_out.width": "motifs.widest_out_star",
+      "motifs.fan_out.window_hours": "motifs.widest_out_star",
+      "motifs.gather_scatter.gather_width": "motifs.hub_in_then_out",
+      "motifs.gather_scatter.hub": "motifs.hub_in_then_out",
+      "motifs.gather_scatter.present": "motifs.hub_in_then_out",
+      "motifs.gather_scatter.scatter_width": "motifs.hub_in_then_out",
+      "motifs.scatter_gather.destination": "motifs.two_hop_recombination",
+      "motifs.scatter_gather.origin": "motifs.two_hop_recombination",
+      "motifs.scatter_gather.present": "motifs.two_hop_recombination",
+      "motifs.scatter_gather.width": "motifs.two_hop_recombination",
+      "motifs.stack.depth": "motifs.layered_bfs",
+      "motifs.stack.layer_widths": "motifs.layered_bfs",
+      "motifs.stack.present": "motifs.layered_bfs",
+      "structure.density": "structure.simple_directed_density",
+      "structure.diameter": "structure.bfs_eccentricity_max",
+      "structure.max_in_degree": "structure.distinct_neighbour_degree",
+      "structure.max_out_degree": "structure.distinct_neighbour_degree",
+      "structure.n_components": "structure.weakly_connected_components",
+      "structure.n_edges": "structure.transaction_count",
+      "structure.n_nodes": "structure.node_count",
+      "structure.n_self_loops": "structure.self_loop_count",
+      "structure.reciprocity": "structure.reciprocal_pair_share",
+      "temporal.burst_detected": "temporal.sliding_window_burst",
+      "temporal.burst_start": "temporal.sliding_window_burst",
+      "temporal.burst_txn_count": "temporal.sliding_window_burst",
+      "temporal.burst_window_hours": "temporal.sliding_window_burst",
+      "temporal.event_ordering": "temporal.phase_ordering_heuristic",
+      "temporal.n_transactions": "temporal.transaction_count",
+      "temporal.span_hours": "temporal.observed_extent",
+      "temporal.window_end": "temporal.observed_extent",
+      "temporal.window_start": "temporal.observed_extent",
+      "typology.confidence": "extractor.typology_resolution",
+      "typology.label": "extractor.typology_resolution",
+      "typology.scope": "extractor.typology_resolution",
+      "typology.source": "extractor.typology_resolution"
+    }
+  },
+  "schema_version": "1.0.0",
+  "structure": {
+    "density": 0.333333,
+    "diameter": 2,
+    "max_in_degree": 1,
+    "max_out_degree": 1,
+    "n_components": 1,
+    "n_edges": 4,
+    "n_nodes": 4,
+    "n_self_loops": 0,
+    "reciprocity": 0.0
+  },
+  "temporal": {
+    "burst_detected": false,
+    "burst_start": null,
+    "burst_txn_count": null,
+    "burst_window_hours": null,
+    "event_ordering": [
+      "outflow_phase",
+      "inflow_phase"
+    ],
+    "n_transactions": 4,
+    "span_hours": 3.0,
+    "window_end": "2022-09-03T15:00:00",
+    "window_start": "2022-09-03T12:00:00"
+  },
+  "typology": {
+    "confidence": 1.0,
+    "label": "cycle",
+    "scope": "stream_membership",
+    "source": "ground_truth"
+  }
+}

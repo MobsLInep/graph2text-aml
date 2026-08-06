@@ -1,0 +1,18 @@
+# @package encoder
+# GCN: the topology-only sanity check. Symmetric normalised averaging, no edge features,
+# no attention. It brackets the MLP control from the opposite side -- the MLP has features
+# and no topology, the GCN has topology and the least expressive use of it.
+name: gcn
+arch: gcn
+hidden_dim: 256
+layers: 3
+heads: 8            # unused by this arm
+concat_heads: true  # unused by this arm
+dropout: 0.2
+edge_dim: 16
+residual: true
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+use_edge_features: true

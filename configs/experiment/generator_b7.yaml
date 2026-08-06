@@ -1,0 +1,20 @@
+# @package _global_
+# Priority 4. The threatening baseline: QLoRA over serialised facts, no graph at all.
+#
+# Read this arm against Phase 7's finding that the MLP control reaches 0.80 AUC-PR with no
+# message passing. If B7 matches S1, the graph encoder is contributing nothing that the
+# serialised facts do not already carry.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_b7
+  description: "Phase 9 B7: QLoRA on serialised facts only. No encoder, no fusion."
+  arm: B7
+  device: cuda
+  limit_cases: null
+  notes: ""
+
+generator:
+  text_mode: serialised
+  use_fusion: false

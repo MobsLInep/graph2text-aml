@@ -1,0 +1,19 @@
+# @package _global_
+# Priority 3. The headline arm: the graph is the ONLY source of case information.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_s2
+  description: "Phase 9 S2: GATv2 + F2 fusion, text_mode=none. Graph-only."
+  arm: S2
+  device: cuda
+  limit_cases: null
+  notes: "No serialised facts in the prompt; everything the narrative states must come through the soft tokens."
+
+generator:
+  text_mode: none
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false

@@ -1,7 +1,18 @@
 # @package generator
+# Phase 9. The `train` block moved to configs/training/generator.yaml so that the model and
+# the regime version separately: an arm changes the model, an OOM fallback changes the
+# regime, and a checkpoint records both (D-067).
 name: llama31_8b_qlora
 base_model: meta-llama/Llama-3.1-8B-Instruct
-max_seq_len: 4096
+dtype: bfloat16
+# flash_attention_2 needs Ampere or newer. Fall back to `sdpa` on older cards; it changes
+# throughput, which Phase 13 reports, and nothing else.
+attn_implementation: flash_attention_2
+# 2048, not the 4096 Phase 4 assumed. Every soft token is a token the narrative cannot use,
+# and 2048 fits the serialised facts plus a full narrative with room to spare. Reducing it
+# further is the documented OOM fallback and MUST be applied to every arm or none — it
+# changes how much of the fact record survives truncation, which is a change to the input.
+max_seq_len: 2048
 
 quantization:
   load_in_4bit: true
@@ -14,22 +25,31 @@ lora:
   alpha: 64
   dropout: 0.05
   target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  # The fusion projector is trained in full and saved with the adapter. It is NEW
+  # parameters, not an adaptation of existing ones, so there is nothing for a low-rank
+  # update to be low-rank against. It also trains in fp32 and is never quantised —
+  # models/fusion/base.py:assert_projector_is_fp32 enforces that after PEFT has walked the
+  # module tree, which is the window in which it would otherwise be silently cast.
+  modules_to_save: [fusion_projector]
   bias: none
 
-train:
-  epochs: 3
-  per_device_batch_size: 1
-  grad_accum_steps: 16
-  lr: 2.0e-4
-  warmup_ratio: 0.03
-  weight_decay: 0.0
-  lr_scheduler: cosine
-  gradient_checkpointing: true
-  bf16: true
+# full        instruction + serialised facts + graph  (S1, B8)
+# none        instruction + graph only                (S2, the headline arm)
+# serialised  instruction + serialised facts, no graph (B7, the text-only baseline)
+text_mode: full
+# False builds a text-only model with no encoder and no projector: the B7 baseline.
+use_fusion: true
+# The Phase 7 encoder was selected on val AUC-PR; unfreezing it lets the narrative loss
+# undo that selection, so an unfrozen run is a separate arm rather than a better default.
+freeze_encoder: true
+gradient_checkpointing: true
 
 generate:
   max_new_tokens: 512
-  temperature: 0.2
-  top_p: 0.9
-  do_sample: true
-  num_return_sequences: 1
+  # Greedy for every reported number: a sampled number is a sample, and reporting one
+  # without its variance overstates precision.
+  do_sample: false
+  # The guard's candidate sampling, which is a different claim and a different table row.
+  guard_temperature: 0.6
+  guard_top_p: 0.9
+  guard_n_candidates: 4

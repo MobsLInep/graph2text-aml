@@ -38,6 +38,15 @@ dependencies = [
 graph = [
   "torch==2.4.0",
   "torch-geometric==2.6.1",
+  # Phase 7 analysis: AUC-PR, silhouette, the linear probe, the UMAP illustration and the
+  # attention figures. scikit-learn and matplotlib are here rather than in `eval` because
+  # the encoder's own gate needs them; `eval` is the CPU narrative-metric stack (Phase 10).
+  "scikit-learn==1.5.2",
+  "matplotlib==3.9.2",
+  "umap-learn==0.5.6",
+  # Experiment tracking. Never required: the trainer falls back to offline/disabled when
+  # no API key is present, so a training run never blocks on network or credentials.
+  "wandb==0.18.3",
 ]
 
 # --- llm: QLoRA finetuning + serving. GPU only. ---
@@ -53,6 +62,17 @@ llm = [
   "vllm==0.6.2",
 ]
 
+# --- stats: the pure-CPU statistics the measurement modules need, with NO torch.
+# Carved out of `eval` because `eval` pulls bert-score, which pulls torch -- and the light
+# environment's whole point is that it does not. `eval/statistics.py` and
+# `experiments/aggregate.py` are under invariant 1, so CI must actually GATE them rather
+# than skip them, and it cannot do that from `eval` without giving up being light. ---
+stats = [
+  "scipy==1.14.1",
+  "statsmodels==0.14.4",
+  "krippendorff==0.8.0",
+]
+
 # --- eval: CPU-only except bert-score, which will use CPU if no GPU is present. ---
 eval = [
   "evaluate==0.4.3",
@@ -65,10 +85,22 @@ eval = [
   "krippendorff==0.8.0",
 ]
 
+# --- api: teacher clients for the Phase 5 Silver build. CPU-only, network-bound.
+# Kept out of the core set so Phases 1-4 and every test stay provider-free: the whole
+# generate/verify/repair/discard loop is exercised through ScriptedTeacher, which needs
+# nothing from here. Only a real generation run needs this extra.
+api = [
+  "anthropic==0.69.0",
+]
+
 # --- human: annotation / adjudication UI. ---
 human = [
   "streamlit==1.39.0",
   "plotly==5.24.1",
+  # Pure-Python PDF, so `make guidelines-pdf` needs no pandoc, LaTeX or headless browser.
+  # The guidelines are a released, cited artifact; their build must not depend on what
+  # happens to be installed on the machine that runs it.
+  "reportlab==4.2.5",
 ]
 
 [dependency-groups]
@@ -82,6 +114,8 @@ dev = [
   "ipykernel==6.29.5",
   "types-PyYAML==6.0.12.20240917",
   "pandas-stubs==2.2.3.241009",
+  "hypothesis==6.112.2",
+  "types-jsonschema==4.23.0.20240813",
 ]
 
 [build-system]
@@ -157,8 +191,21 @@ explicit_package_bases = true
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torch_geometric.*", "evaluate.*", "sacrebleu.*", "rouge_score.*", "bert_score.*", "krippendorff.*"]
+module = [
+  "torch.*", "torch_geometric.*", "evaluate.*", "sacrebleu.*", "rouge_score.*",
+  "bert_score.*", "krippendorff.*", "scipy.*", "nltk.*", "transformers.*", "anthropic.*",
+]
 ignore_missing_imports = true
+
+# D-003 scopes strict typing to facts/ and eval/ ONLY, and that scoping has to survive
+# the fact layer importing data/. Without this, `files` pulls data/ and utils/ in as
+# followed imports and reports 30-odd numpy `type-arg` errors in modules the decision
+# deliberately exempts -- which would either force ignores across untyped-Polars/numpy
+# surfaces or push someone to widen the exemption in facts/ instead. `silent` still
+# resolves the types facts/ needs; it only suppresses errors raised inside these modules.
+[[tool.mypy.overrides]]
+module = ["g2t_aml.data.*", "g2t_aml.utils.*", "g2t_aml.corpus.*"]
+follow_imports = "silent"
 
 # -------------------------------------------------------------- pytest ------
 [tool.pytest.ini_options]

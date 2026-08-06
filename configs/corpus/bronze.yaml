@@ -7,3 +7,58 @@ template_pack: sar_v1
 seed: ${seed}
 schema_version: ${schema_version.case_facts}
 require_full_coverage: true    # every asserted fact must trace to a fact-record field
+
+# Version of the training-record schema this run writes. FROZEN at 1.0.0 in Phase 4;
+# Silver and Gold reuse the same document with a different `tier` and `generator` block.
+training_record_schema_version: "1.0.0"
+
+# --- corpus membership -------------------------------------------------------
+# The corpus is drawn from the FROZEN Phase 2 split manifest and nothing else. A case
+# outside the manifest has no split, so it cannot be trained on, evaluated against, or
+# audited for leakage -- validation check 10 fails it rather than guessing.
+source: split_manifest
+
+# Cases with fewer than this many accounts are excluded. A subgraph with no counterparty
+# in scope has no activity to describe: the focal account's every transaction is a
+# self-loop or absent, `role` is `terminal`, and every motif descriptor is null. The
+# narrative would be a caption. This is the Phase 4 half of the decision Phase 3
+# deliberately deferred (see PHASE_LOG, "Degenerate cases were NOT filtered") -- and note
+# it excludes only n_nodes < 2, not the whole 18.1% below three accounts: a two-account
+# case describes a real transfer and gets the `minimal_activity` family.
+min_nodes: 2
+
+# 0 means every eligible case. Present for smoke runs, never for a real build.
+limit: 0
+
+# --- rendering ---------------------------------------------------------------
+renderer_version: "0.1.0"
+
+# Which token counter measures the [80, 400] length gate. `heuristic-bpe-v1` is a
+# dependency-free over-approximation of Llama's BPE; naming a Hugging Face model or a
+# local directory instead uses the real tokenizer and RAISES if it cannot be loaded --
+# never a silent fallback, because a length distribution attributed to the wrong
+# tokenizer is a number that does not mean what it says. See DECISIONS D-039.
+tokenizer: heuristic-bpe-v1
+
+length:
+  min_tokens: 80
+  max_tokens: 400
+
+# --- validation --------------------------------------------------------------
+validation:
+  # The unverifiable budget, per record. Not a knob to turn when a corpus fails:
+  # UNVERIFIABLE collects exactly the compliance-dangerous claims the graph cannot back.
+  max_unverifiable_rate: 0.05
+  # Exact-Jaccard threshold over 5-gram shingles, confirmed on every LSH candidate.
+  dedup_jaccard: 0.85
+  # Abort the build with a non-zero exit when any record fails any of the ten checks.
+  # Bronze failing is a bug in the renderer or the fact layer, not a reason to proceed.
+  fail_on_gate: true
+
+# --- diversity ---------------------------------------------------------------
+diversity:
+  # Reported on every build. A pack whose self-BLEU exceeds this is collapsing and needs
+  # more realisation variants before it is used for training; the build warns rather than
+  # aborting, because the right response is an authoring decision.
+  self_bleu_warn_above: 0.60
+  seed: ${seed}

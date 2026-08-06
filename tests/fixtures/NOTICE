@@ -1,0 +1,91 @@
+NOTICE — third-party data redistributed in this directory
+=========================================================
+
+Two redistributions live under this directory, both governed by CDLA-Sharing-1.0:
+
+1. `amlworld/HI-Small_Trans.csv` and `amlworld/HI-Small_Patterns.txt` — a 500-row
+   **slice of the IBM AMLworld dataset**, redistributed as a loader test fixture.
+2. `corpus/bronze_quickstart.jsonl.gz` — 220 Bronze narrative records with their embedded
+   `case_facts`, redistributed as the quickstart fixture. See the section at the end.
+
+Both are Data or Enhanced Data under CDLA-Sharing-1.0, not §3.5 Results, and the
+Apache-2.0 licence at the root of this repository does not apply to either.
+
+Data Provider
+-------------
+Altman, E., Blanuša, J., von Niederhäusern, L., Egressy, B., Anghel, A., Atasu, K.
+"Realistic Synthetic Financial Transactions for Anti-Money Laundering Models."
+Advances in Neural Information Processing Systems 36 (Datasets and Benchmarks), 2023.
+Source: https://github.com/IBM/AML-Data and
+        https://www.kaggle.com/datasets/ealtman2019/ibm-transactions-for-anti-money-laundering-aml
+
+Licence
+-------
+The AMLworld **data** is released under the **Community Data License Agreement –
+Sharing, Version 1.0 (CDLA-Sharing-1.0)**: https://cdla.dev/sharing-1-0/
+
+Note that this differs from the licence of the IBM AML-Data repository *code*, which is
+Apache-2.0, and from the licence of this repository, which is also Apache-2.0. The
+Apache-2.0 licence at the root of this repository does **not** apply to these two files.
+
+CDLA-Sharing-1.0 is a share-alike licence for data. Because these files are a publication
+of Data (and, per the changes noted below, of Enhanced Data), they remain governed by
+CDLA-Sharing-1.0 and are redistributed under an unmodified form of that agreement, with
+attribution to the Data Provider preserved above.
+
+Changes made to the original files (CDLA-Sharing-1.0 §3.2)
+----------------------------------------------------------
+Both files here are modified. The changes are:
+
+1. `HI-Small_Trans.csv` contains only the header line and the first 500 data rows of the
+   original `HI-Small_Trans.csv`, except that the final three rows were replaced with
+   three genuine six-decimal Bitcoin rows drawn from later in the original file, so the
+   fixture exercises that formatting case.
+2. In `HI-Small_Trans.csv`, the `Is Laundering` flag was changed from 0 to 1 on seven
+   rows (indices 3, 7, 42, 100, 101, 497, 498, zero-based over the data rows), so that
+   the fixture forms a self-consistent miniature dataset.
+3. `HI-Small_Patterns.txt` is **not** a slice of the original patterns file. It was
+   assembled by hand from the rows named above, into three streams (FAN-OUT, CYCLE,
+   STACK), following the original file's delimiter grammar.
+
+These files are therefore NOT suitable for any purpose other than exercising the loader.
+They are a fabricated miniature, and their statistics are meaningless. The real published
+statistics are asserted against the complete dataset by
+`tests/integration/test_published_statistics.py`.
+
+`corpus/bronze_quickstart.jsonl.gz` — the quickstart fixture
+------------------------------------------------------------
+220 records drawn from the Bronze corpus this project builds: 20 from each of the eleven
+narrative families, taken in sorted `case_id` order so the selection is deterministic and
+carries no sampling decision.
+
+Each record embeds the full `case_facts` record for its case, and the narrative quotes
+AMLworld account identifiers, timestamps, currencies and transaction amounts verbatim
+(e.g. `account 021611|800F41B10 ... 2022-09-07 13:30 ... 6,273 US Dollar`).
+
+**That is more than a de-minimis portion of the original Data, so this file is Enhanced
+Data under CDLA-Sharing-1.0 and not a §3.5 Result.** It is redistributed under an
+unmodified form of that agreement, with attribution to the Data Provider above preserved.
+
+Changes made (CDLA-Sharing-1.0 §3.2): the records are derived rather than copied. Each was
+produced by extracting a 2-hop, 48-hour-windowed subgraph around a seed account, computing
+a structured fact record from it, and rendering a narrative from that record by
+deterministic template. Amounts are rounded for display; cross-currency aggregates are
+withheld as typed sentinels. No original transaction row is reproduced in full.
+
+This file is not a substitute for the corpus. It is a stratified slice, so its statistics
+differ from the full 15,707-record corpus by construction — Fact Coverage reads 0.8359
+here against 0.8595, and the H9 rate reads 0.45 here against 0.9179 — because the eleven
+families are evenly weighted rather than weighted as they occur.
+
+Scope of the share-alike obligation
+-----------------------------------
+CDLA-Sharing-1.0 §3.5 provides that the agreement "imposes no obligations or restrictions
+on Your Use or Publication of Results" — outputs of computational use, such as trained
+models and evaluation metrics. The share-alike obligation reaches the data and Enhanced
+Data only.
+
+**Generated narratives are Results only when they do not carry the source Data with
+them.** These do, so they are treated as Enhanced Data. `tests/golden/`, which holds
+metrics computed *over* the fixture rather than the fixture itself, is Apache-2.0. See
+`docs/data_cards/amlworld_hi_small.md` and `docs/dataset_cards/bronze.md` §7.

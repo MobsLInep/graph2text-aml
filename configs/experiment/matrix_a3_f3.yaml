@@ -1,0 +1,25 @@
+# @package _global_
+# A3/F3 -- fusion ablation, projector axis: a LINEAR projector instead of the MLP.
+# The gate stays at F2's setting, so the two axes are never varied together.
+#
+# The F1 point of this ablation is B8, which is S1 with the gate off and nothing else
+# changed. Running a third arm with those settings under a different name would spend
+# GPU-days to produce a duplicate row (registry._A3_REUSES_B8).
+defaults:
+  - override /training: generator
+
+experiment:
+  name: matrix_a3_f3
+  description: "Phase 11 A3: S1 with a linear fusion projector."
+  arm: A3_F3
+  device: cuda
+  limit_cases: null
+  notes: ""
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false
+  projector: linear

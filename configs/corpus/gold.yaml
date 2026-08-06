@@ -1,9 +1,89 @@
 # @package corpus
 # Tier 3: human-authored narratives from the annotation protocol in docs/annotation/.
-# Small, held out, never used for training.
+# Small, held out, NEVER used for training -- enforced by
+# g2t_aml.corpus.training_data.load_training_records, not by convention.
 tier: gold
 name: gold
 schema_version: ${schema_version.case_facts}
-annotation_protocol: ${paths.docs_dir}/annotation/protocol.md
+annotation_protocol: ${paths.docs_dir}/annotation/annotation_guidelines.md
 min_annotators_per_case: 2
 adjudication: required
+
+# The training-record schema Gold writes. The SAME document Bronze and Silver write
+# (D-037): the three tiers differ only in `tier` and the `generator` block, which is what
+# lets one ten-point harness gate all three.
+training_record_schema_version: "1.0.0"
+
+# --- sampling (scripts/06_sample_gold_cases.py) --------------------------------
+# Which cases become Gold. Drawn ENTIRELY from the test split, because Gold's job is to
+# be a held-out reference; the selection is written back into the frozen split manifest
+# directory as a reservation the training loader refuses to cross.
+sampling:
+  n_cases: 350
+  # The reservation must hold at least this many test-only cases or the sample is
+  # refused. Below this, Gold is too small to be a reference and the phase has produced
+  # a demonstration rather than an evaluation set.
+  min_reserved: 200
+  split: test
+  seed: ${seed}
+
+  # The three allocation blocks. Named rather than derived, because every hard negative
+  # is licit and therefore `unclassified`, so an even nine-way typology allocation and a
+  # 25% hard-negative floor cannot both hold. The floor wins. See D-052.
+  hard_negative_share: 0.28
+  typed_share: 0.44
+  unclassified_share: 0.28
+  # Asserted after allocation. Not a target -- a refusal threshold.
+  hard_negative_floor: 0.25
+
+  # Substrate split. Elliptic2 has no ingested data (access still not requested), so its
+  # quota WILL come back as a reported deficit rather than being silently reallocated to
+  # AMLworld. That deficit is the honest statement of what the Gold set covers.
+  substrates:
+    - interim_name: amlworld_hi_small
+      manifest_dir: ${paths.splits_dir}/amlworld
+      share: 0.7
+    - interim_name: elliptic2
+      manifest_dir: ${paths.splits_dir}/elliptic2
+      share: 0.3
+
+# --- calibration ---------------------------------------------------------------
+calibration:
+  # Every annotator completes this many cases against project-lead references BEFORE
+  # any real annotation. An uncalibrated annotator's work is not accepted.
+  n_cases: 10
+  # Drawn from the Gold sample itself, so calibration exercises the same distribution.
+  seed: ${seed}
+  # Per-dimension pass thresholds. An annotator below any of these gets targeted
+  # feedback and re-calibrates; they do not proceed on an average.
+  thresholds:
+    typology_agreement: 0.70
+    salience_coverage: 0.70
+    hedging_compliance: 1.00   # a guilt overclaim is critical; there is no partial credit
+    factual_accuracy: 0.95
+
+# --- agreement -----------------------------------------------------------------
+agreement:
+  # Share of items given to two independent annotators. Assigned DETERMINISTICALLY from
+  # the case id, so the double-annotated set is fixed before anyone starts and cannot
+  # drift toward the easy cases.
+  double_annotation_rate: 0.15
+  # Reported, not gated: narrative writing has legitimate surface variance and a low
+  # text-similarity number between two correct narratives is evidence, not a failure.
+  report_text_similarity: true
+
+# --- ingestion -----------------------------------------------------------------
+ingestion:
+  # Every Gold item is checked against its fact record by a second reviewer, and every
+  # disagreement is adjudicated with the adjudication recorded.
+  second_review: required
+  # Gold is gated by the same ten checks as Bronze and Silver. A human-authored record
+  # that fails them is a record to revise, not a threshold to lower.
+  validation:
+    max_unverifiable_rate: 0.05
+    dedup_jaccard: 0.85
+    fail_on_gate: true
+  length:
+    min_tokens: 80
+    max_tokens: 400
+  tokenizer: heuristic-bpe-v1

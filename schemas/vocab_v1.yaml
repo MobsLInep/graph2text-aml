@@ -1,0 +1,389 @@
+# Controlled vocabulary v1 — what any component of Graph2Text AML is PERMITTED to assert.
+#
+# This file bounds the language of the whole system. Generation may use nothing outside
+# it; checking resolves every qualitative phrase through it. Freezing it alongside
+# case_facts_v1.json is what makes "faithfulness" a measurable property rather than an
+# impression.
+#
+# The methodological contribution is section `risk_descriptors`: every qualitative
+# intensifier binds to a numeric field and a condition on that field. "Rapid dispersal"
+# is not a stylistic flourish, it is a claim that temporal.burst_window_hours < 24. If the
+# record says 400, the narrative is CONTRADICTED, not merely florid.
+
+vocab_version: "1.0.0"
+case_facts_schema_version: "1.0.0"
+
+# ---------------------------------------------------------------- entity roles ---
+# Closed list. Mirrored by $defs.entity_role in case_facts_v1.json; a test asserts the
+# two agree.
+#
+# NOTE THE DELIBERATE EXCLUSION. There is no `mixer`, no `exchange`, no `merchant`, no
+# `gambling_service` — no business-type term of any kind. Neither substrate carries an
+# entity-type column: AMLworld's schema has a bank code and nothing else about an account,
+# and Elliptic2's node features are anonymised (D-015). Both masks therefore set
+# entity_types=false. Calling an address a "mixer" on this evidence is hallucination class
+# H4, rated Critical, and it is critical precisely because it is the most plausible-looking
+# sentence an unconstrained model will write. Excluding the words from the vocabulary is
+# how the system is prevented from writing them at all rather than corrected afterwards.
+# See D-029.
+entity_roles:
+  originator:
+    definition: "Sends inside the case and receives nothing inside it."
+    binds_to:
+      in_degree: "== 0"
+      out_degree: "> 0"
+    phrase_variants: ["originator", "the originating account", "the sending account"]
+  beneficiary:
+    definition: "Receives inside the case and sends nothing inside it."
+    binds_to:
+      in_degree: "> 0"
+      out_degree: "== 0"
+    phrase_variants: ["beneficiary", "the receiving account", "the destination account"]
+  pass_through:
+    definition: "Exactly one counterparty in and exactly one out."
+    binds_to:
+      in_degree: "== 1"
+      out_degree: "== 1"
+    phrase_variants: ["pass-through account", "conduit account"]
+  hub:
+    definition: "At least hub_min_degree distinct counterparties on BOTH sides."
+    binds_to:
+      min_in_out_degree: ">= 5"
+    phrase_variants: ["hub", "hub account", "central account"]
+  intermediary:
+    definition: "Sends and receives inside the case, but is neither pass_through nor hub."
+    binds_to:
+      in_degree: "> 0"
+      out_degree: "> 0"
+    phrase_variants: ["intermediary", "intermediate account"]
+  terminal:
+    definition: >-
+      No counterparties inside the case at all. Reachable only through self-loops, which
+      HI-Small has 591,212 of and which are deliberately not cleaned (D-017).
+    binds_to:
+      in_degree: "== 0"
+      out_degree: "== 0"
+    phrase_variants: ["isolated account", "account with no counterparties in scope"]
+
+# ------------------------------------------------------------------ typologies ---
+typologies:
+  amlworld:
+    source: ground_truth
+    scope: stream_membership
+    note: >-
+      A case is PART OF a stream of this typology. The 48-hour window cap (D-019) keeps
+      65% of a stream's transactions on average and covers only 28% of streams in full, so
+      a claim that the case exhibits the complete scheme is unsupported regardless of the
+      label. Enforced by the `completeness` forbidden list below.
+    members:
+      - fan_out
+      - fan_in
+      - gather_scatter
+      - scatter_gather
+      - cycle
+      - random
+      - bipartite
+      - stack
+      - unclassified
+  elliptic2:
+    source: inferred
+    scope: case_structure
+    note: >-
+      Elliptic2 has no typology ground truth (availability.typology_ground_truth=false).
+      Any typology on an Elliptic2 case comes from motif detection alone and MUST be
+      flagged `source: inferred`. A narrative asserting an inferred typology without a
+      hedge from `hedging.required_for_inferred` is H5.
+    members:
+      - fan_out
+      - fan_in
+      - gather_scatter
+      - scatter_gather
+      - cycle
+      - bipartite
+      - stack
+      - unclassified
+
+# ----------------------------------------------------- risk descriptors (bindings) ---
+# Every qualitative intensifier the system may use, and the numeric condition that makes
+# it true. A phrase from `phrase_variants` in a narrative is a claim about `binds_to`
+# satisfying `condition`. The checker resolves it and returns:
+#   SUPPORTED      — field present and condition holds
+#   CONTRADICTED   — field present and condition fails      (hallucination class H2)
+#   UNVERIFIABLE   — field absent or under an availability sentinel
+#
+# Conditions are evaluated by facts.vocab.evaluate_condition, which accepts only the
+# operators <, <=, >, >=, ==, != against a numeric literal. There is no expression
+# evaluator here and there will not be one: the grammar is deliberately too small to hide
+# a bug in.
+risk_descriptors:
+  # The threshold here MUST be strictly tighter than FactConfig.burst_window_hours (24),
+  # and a test asserts it. burst_window_hours is bounded above by that cap by
+  # construction, so a binding of "< 24" would be satisfied by every burst the detector
+  # can possibly report — a descriptor that always holds is not a claim. Measured on
+  # HI-Small, the maximum-count burst routinely occupies 20+ hours, which is not what any
+  # reader understands by "rapid". 6 hours is a quarter of the detection window and is
+  # the span at which dispersal is genuinely compressed relative to the 48-hour case
+  # window. See D-026.
+  rapid_dispersal:
+    binds_to: temporal.burst_window_hours
+    condition: "<= 6"
+    requires: [absolute_timestamps, fine_temporal_resolution]
+    phrase_variants:
+      - "rapid dispersal"
+      - "dispersed within a short window"
+      - "dispersed rapidly"
+      - "rapid onward movement"
+  high_fan_out:
+    binds_to: motifs.fan_out.width
+    condition: ">= 8"
+    requires: []
+    phrase_variants:
+      - "high fan-out"
+      - "dispersed across numerous accounts"
+      - "wide onward distribution"
+  high_fan_in:
+    binds_to: motifs.fan_in.width
+    condition: ">= 8"
+    requires: []
+    phrase_variants:
+      - "high fan-in"
+      - "collected from numerous sources"
+      - "wide inbound aggregation"
+  near_threshold_structuring:
+    binds_to: flow.n_transfers_near_threshold
+    condition: ">= 3"
+    requires: [monetary_amounts]
+    phrase_variants:
+      - "transfers clustered below the reporting threshold"
+      - "amounts consistent with structuring"
+      - "repeated sub-threshold transfers"
+  high_retention:
+    binds_to: labels.illicit_inflow_share
+    condition: ">= 0.5"
+    requires: [monetary_amounts, node_labels]
+    phrase_variants:
+      - "a majority of inbound value from flagged counterparties"
+      - "predominantly illicit inflow"
+  extended_activity:
+    binds_to: temporal.span_hours
+    condition: ">= 72"
+    requires: [absolute_timestamps]
+    phrase_variants:
+      - "sustained over an extended period"
+      - "activity spanning several days"
+  concentrated_activity:
+    binds_to: temporal.span_hours
+    condition: "< 24"
+    requires: [absolute_timestamps]
+    phrase_variants:
+      - "concentrated within a single day"
+      - "compressed into a short period"
+  dense_interconnection:
+    binds_to: structure.density
+    condition: ">= 0.3"
+    requires: []
+    phrase_variants:
+      - "densely interconnected"
+      - "heavily interlinked counterparties"
+  layered_structure:
+    binds_to: motifs.stack.depth
+    condition: ">= 3"
+    requires: []
+    phrase_variants:
+      - "layered structure"
+      - "multiple successive layers"
+      - "consistent with layering"
+  proximate_to_illicit:
+    binds_to: labels.min_hops_to_known_illicit
+    condition: "<= 1"
+    requires: [node_labels]
+    phrase_variants:
+      - "in direct contact with flagged counterparties"
+      - "one hop from known illicit activity"
+  multi_institution:
+    binds_to: flow.n_distinct_banks
+    condition: ">= 3"
+    requires: [institution_identity]
+    phrase_variants:
+      - "spanning several institutions"
+      - "across multiple banks"
+
+# --------------------------------------------------------------------- hedging ---
+# A SAR reports SUSPICION. It is a referral for investigation, not a finding of fact, and
+# the distinction is a legal one, not a matter of tone. Asserting guilt is hallucination
+# class H7, rated Critical, and is reported in the Critical Error Rate independently of
+# overall faithfulness.
+hedging:
+  allowed:
+    - "appears consistent with"
+    - "is indicative of"
+    - "may reflect"
+    - "warrants further review"
+    - "is consistent with"
+    - "suggests"
+    - "may indicate"
+    - "raises the possibility of"
+    - "merits further enquiry"
+    - "could not be verified"
+  forbidden:
+    guilt:
+      hallucination_class: H7
+      severity: critical
+      phrases:
+        - "is money laundering"
+        - "was money laundering"
+        - "the criminal"
+        - "the launderer"
+        - "the fraudster"
+        - "proves"
+        - "proven"
+        - "confirms"
+        - "confirmed that"
+        - "is guilty of"
+        - "guilty"
+        - "clearly laundering"
+        - "definitely laundering"
+        - "beyond doubt"
+        - "conclusively"
+    entity_type:
+      hallucination_class: H4
+      severity: critical
+      note: >-
+        No substrate carries an entity-type column, so every one of these is an
+        attribution with no evidence behind it. See the entity_roles exclusion note.
+      phrases:
+        - "mixer"
+        - "tumbler"
+        - "exchange account"
+        - "cryptocurrency exchange"
+        - "darknet market"
+        - "shell company"
+        - "front company"
+        - "casino account"
+        - "money service business"
+        - "hawala"
+    completeness:
+      hallucination_class: H8
+      severity: medium
+      note: >-
+        A case holds 65% of its stream's transactions on average (D-019). No narrative may
+        claim to describe a scheme in full.
+      phrases:
+        - "the entire scheme"
+        - "the complete laundering operation"
+        - "the full extent of"
+        - "all transactions in the scheme"
+        - "the whole network"
+    motive:
+      hallucination_class: H8
+      severity: medium
+      note: "Intent and motive are off-graph. Nothing in a subgraph evidences them."
+      phrases:
+        - "in order to evade"
+        - "with the intention of"
+        - "deliberately structured"
+        - "knowingly"
+        - "attempting to conceal"
+        - "in an effort to disguise"
+  required_for_inferred:
+    note: >-
+      A typology whose `source` is `inferred` must appear inside one of these hedges. An
+      unhedged inferred typology is H5.
+    phrases:
+      - "appears consistent with"
+      - "is indicative of"
+      - "may reflect"
+      - "structurally resembles"
+
+# ------------------------------------------------------------------ regulatory ---
+# The ONLY regulatory references any component may cite. Anything outside this list is
+# hallucination class H6 (Critical): an invented threshold or rule is the failure mode
+# that would put a real compliance team in breach.
+#
+# Every entry is a general, jurisdiction-labelled reference. The system may cite one only
+# when the case's currency matches. AMLworld is synthetic and carries no jurisdiction, so
+# these are permitted as CONTEXT ("the USD 10,000 reporting threshold") and never as a
+# finding about a real filing obligation.
+regulatory_references:
+  - id: us_ctr_10000
+    jurisdiction: US
+    currency: "US Dollar"
+    threshold: 10000.00
+    citation: "31 CFR 1010.311 — Currency Transaction Report filing threshold"
+    phrase_variants:
+      - "the USD 10,000 reporting threshold"
+      - "the currency transaction reporting threshold"
+  - id: us_structuring_5000
+    jurisdiction: US
+    currency: "US Dollar"
+    threshold: 5000.00
+    citation: "31 CFR 1020.320 — SAR filing threshold for banks"
+    phrase_variants:
+      - "the USD 5,000 SAR filing threshold"
+  - id: eu_cash_10000
+    jurisdiction: EU
+    currency: "Euro"
+    threshold: 10000.00
+    citation: "Regulation (EU) 2018/1672 — cash controls declaration threshold"
+    phrase_variants:
+      - "the EUR 10,000 declaration threshold"
+
+# ------------------------------------------------------------------- salience ---
+# The fields an ADEQUATE narrative must mention, per typology. Fixed HERE AND NOW, before
+# any generation output has been seen. Defining salience after inspecting results would
+# let the definition drift toward whatever the model happened to produce, which is the
+# methodological error this section exists to prevent. See D-032.
+#
+# Paths are field paths into case_facts_v1. A path under an availability sentinel is
+# excused: an Elliptic2 fan-out narrative is not penalised for omitting total_outflow.
+salience:
+  _common:
+    - focal_entity.id
+    - structure.n_nodes
+    - structure.n_edges
+  fan_out:
+    - motifs.fan_out.width
+    - temporal.span_hours
+    - flow.total_outflow
+    - labels.n_illicit_counterparties
+  fan_in:
+    - motifs.fan_in.width
+    - temporal.span_hours
+    - flow.total_inflow
+    - labels.n_illicit_counterparties
+  gather_scatter:
+    - motifs.gather_scatter.gather_width
+    - motifs.gather_scatter.scatter_width
+    - flow.total_inflow
+    - flow.total_outflow
+    - temporal.event_ordering
+  scatter_gather:
+    - motifs.scatter_gather.width
+    - flow.total_outflow
+    - temporal.span_hours
+    - focal_entity.role
+  cycle:
+    - motifs.cycle.length
+    - temporal.span_hours
+    - flow.total_outflow
+  bipartite:
+    - motifs.bipartite.left_size
+    - motifs.bipartite.right_size
+    - structure.density
+    - flow.total_inflow
+  stack:
+    - motifs.stack.depth
+    - temporal.span_hours
+    - flow.total_outflow
+    - focal_entity.role
+  random:
+    - temporal.span_hours
+    - flow.total_inflow
+    - flow.total_outflow
+    - labels.n_illicit_counterparties
+  unclassified:
+    - temporal.span_hours
+    - flow.total_inflow
+    - flow.total_outflow
+    - labels.n_illicit_counterparties
+    - focal_entity.role

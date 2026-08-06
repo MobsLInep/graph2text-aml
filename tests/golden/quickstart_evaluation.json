@@ -1,0 +1,29 @@
+{
+  "faithfulness": {
+    "critical_error_rate": 0.0,
+    "fact_coverage": 0.8358766233766234,
+    "fact_f1": 0.9101118578391305,
+    "fact_precision": 1.0,
+    "hallucination_rate": 0.0,
+    "n_cases": 220,
+    "n_claims": 3734,
+    "n_narratives_with_no_claims": 0,
+    "numeric_accuracy": 1.0,
+    "ordering_accuracy": 1.0,
+    "typology_accuracy": 1.0,
+    "unverifiable_rate": 0.0,
+    "zero_hallucination_rate": 1.0
+  },
+  "taxonomy_critical_error_rate": 0.0,
+  "taxonomy_rate_by_class": {
+    "H1": 0.0,
+    "H2": 0.0,
+    "H3": 0.0,
+    "H4": 0.0,
+    "H5": 0.0,
+    "H6": 0.0,
+    "H7": 0.0,
+    "H8": 0.0,
+    "H9": 0.45
+  }
+}

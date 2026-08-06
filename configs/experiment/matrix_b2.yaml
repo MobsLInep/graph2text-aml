@@ -1,0 +1,17 @@
+# @package _global_
+# B2 -- the plan's baseline (a): classify, then state the classification. The Phase 7
+# GATv2 checkpoint scores the case and the score is rendered into the template narrative.
+# CPU-only at matrix time: the encoder is already trained.
+defaults:
+  - override /encoder: gatv2
+
+experiment:
+  name: matrix_b2
+  description: "Phase 11 B2: GATv2 classifier + template."
+  arm: B2
+  device: cpu
+  limit_cases: null
+  notes: "Reads the Phase 7 checkpoint; trains nothing."
+
+baseline:
+  threshold: 0.5

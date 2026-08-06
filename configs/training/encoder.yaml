@@ -1,0 +1,42 @@
+# @package training
+# Phase 7 encoder training. Every value here is echoed into run_context.json (invariant 5).
+optimizer: adamw
+lr: 1e-3
+weight_decay: 1e-4
+scheduler: cosine
+epochs: 100
+early_stop_patience: 15
+# Selection, early stopping and every claim of superiority go through AUC-PR. Under this
+# imbalance ROC-AUC is flattering to the point of being misleading; it is reported for
+# comparability with the AML literature and is never selected on. See DECISIONS.md D-060.
+early_stop_metric: val_auc_pr
+batch_size: 64
+eval_batch_size: 256
+# focal | weighted_bce. Both are implemented and both are run: "we used focal loss" is not
+# a result unless the alternative was measured. Both take the same inverse-frequency alpha,
+# so the comparison isolates the focusing term.
+loss: focal
+focal_gamma: 2.0
+class_weights: inverse_freq
+# Weight on the auxiliary 9-way typology cross entropy. 0 keeps the head built and scored
+# but contributes no gradient, which is how the auxiliary-head ablation runs without
+# changing the parameter count.
+typology_weight: 0.3
+grad_clip: 1.0
+# Random sign flips on the Laplacian eigenvector block during training. An eigenvector and
+# its negation are equally valid and numpy picks one arbitrarily; flipping forces a
+# sign-invariant function instead of memorising the builder's arbitrary choice.
+lap_pe_sign_flip: true
+# >= 3 per the Phase 7 gate. Mean +/- std and bootstrap CIs are reported over these.
+seeds: [42, 43, 44]
+# Bootstrap settings for every reported interval.
+n_bootstrap: 2000
+ci: 0.95
+# Positional encoding widths, used when the feature cache is built.
+lap_pe_dim: 8
+rw_pe_dim: 16
+# Re-evaluate a completed (arm, seed) from its saved checkpoint instead of retraining it.
+# Selection already happened when the checkpoint was written, so the loop would reproduce
+# the same weights at considerable cost. Metrics are always recomputed from the restored
+# weights, never read back out of the old result file.
+resume: false

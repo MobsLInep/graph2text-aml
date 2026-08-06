@@ -47,6 +47,11 @@ htmlcov/
 outputs/
 multirun/
 
+# --- W&B local run store. The trainer falls back to offline mode when no API key is
+# present (Phase 7), so a run always writes here; the record that matters is
+# artifacts/runs/<...>/run_context.json, which is invariant 5's artifact.
+wandb/
+
 # --- editors / os ---
 .idea/
 .vscode/

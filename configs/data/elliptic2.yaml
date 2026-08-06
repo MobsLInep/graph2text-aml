@@ -5,9 +5,19 @@ citation: "Bellei et al., KDD Workshop on Machine Learning in Finance 2024"
 raw_subdir: elliptic2
 access: gated  # requires signed access agreement; not redistributable
 
+registry_key: elliptic2
+size: null           # Elliptic2 ships a single release, not sized variants
+interim_name: elliptic2
+
 # Invariant 4. Elliptic2 features are anonymised: there are no amounts, no currencies,
 # no wall-clock timestamps and no entity types. Any narrative asserting them is a
 # hallucination by construction, and the fact layer must mask them out.
+# `node_features` was corrected from true to false in Phase 1. Elliptic2 does ship node
+# feature columns, but they are anonymised: no column has a published meaning. The mask
+# governs what may be *asserted*, and an anonymised column licenses no assertion at all,
+# so recording it as available was the wrong reading of the flag. The features are still
+# loaded and still reach the encoder as opaque numbers -- the mask only forbids naming
+# them. See AvailabilityMask.semantic_node_features in src/g2t_aml/data/canonical.py.
 availability:
   amounts: false
   currencies: false
@@ -16,7 +26,7 @@ availability:
   entity_types: false
   account_ids: true      # cluster identifiers, pseudonymous
   typology_labels: false
-  node_features: true    # anonymised
+  node_features: false   # present but anonymised; no column may be given a meaning
 
 typologies: []
 

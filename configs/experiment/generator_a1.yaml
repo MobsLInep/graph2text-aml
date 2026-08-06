@@ -1,0 +1,27 @@
+# @package _global_
+# Priority 2. THE CONTROL. Do not skip this to save GPU time — it is the point.
+#
+# S1 in every respect except that each narrative is paired with a DIFFERENT case's graph.
+# Same encoder, same projector, same parameter count, same token count, same optimiser,
+# same seed, same curriculum, same number of gradient steps. If S1 does not significantly
+# beat A1 on faithfulness, the fusion layer is decoration and the paper's contribution is
+# the dataset and the evaluation framework rather than the architecture (Gate 8).
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_a1
+  description: "Phase 9 A1: S1 with graph tokens deranged across the batch. The control."
+  arm: A1
+  device: cuda
+  limit_cases: null
+  notes: "The fixed-point count in the run's shuffle stats must be zero."
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  # The one line that makes this the control rather than a second S1.
+  shuffle: true
+  shuffle_mode: across_batch

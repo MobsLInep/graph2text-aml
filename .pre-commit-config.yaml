@@ -12,8 +12,13 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # 1 MB, matching MAX_TRACKED_BYTES in scripts/14_verify_release.py so the two
+      # guards cannot disagree. It was 512 KB, which predates invariant 2's committed
+      # split manifests -- schemas/splits/amlworld/splits.json is 587 KB and *must* be
+      # in git. The corpus, the checkpoints and the raw data all live outside git, so
+      # anything over this line is still a leak rather than a legitimate large file.
       - id: check-added-large-files
-        args: [--maxkb=512]
+        args: [--maxkb=1024]
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-json
@@ -23,6 +28,15 @@ repos:
       - id: trailing-whitespace
       # Invariant 8: no real-world identifiers or secrets, ever.
       - id: detect-private-key
+
+  # detect-private-key catches only PEM blocks. Provider API keys, HF tokens and W&B
+  # keys are what this project actually risks staging, so scan for those too. The
+  # allowlisted false positives are documented in .gitleaks.toml.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        args: [--config, .gitleaks.toml]
 
   - repo: local
     hooks:

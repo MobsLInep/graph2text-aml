@@ -1,0 +1,26 @@
+# @package _global_
+# A2 -- is topology needed? S1 with the Phase 7 MLP control in place of the GAT.
+#
+# The MLP control is a DeepSets model over case-local node features with NO message
+# passing, and it reaches 0.80 AUC-PR against GATv2's 0.872. Every claim about what graph
+# topology contributes is a claim about that 0.07, not about the whole number -- so if A2
+# matches S1 here, the fusion layer is carrying node-local summary statistics and the word
+# "topology" should leave the paper's claims.
+defaults:
+  - override /training: generator
+  - override /encoder: mlp
+
+experiment:
+  name: matrix_a2
+  description: "Phase 11 A2: S1 with the MLP (no message passing) encoder."
+  arm: A2
+  device: cuda
+  limit_cases: null
+  notes: "Next in line for extra seeds after the central four."
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false

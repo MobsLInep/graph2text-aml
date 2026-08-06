@@ -1,0 +1,68 @@
+# Graph2Text AML -- CPU image.
+#
+# Covers phases 1-6 and 10: ingestion, splits, the fact layer, Bronze/Silver corpus
+# construction and evaluation. Those are CPU-only *by design* -- the default install pulls
+# no CUDA packages at all, which is what keeps CI under ten minutes and lets fact-layer
+# work happen on a laptop. Do not introduce a torch dependency into them.
+#
+# This is the image `scripts/14_verify_release.py --in-docker` builds and the scheduled
+# release-verification workflow runs. For the GPU phases, use Dockerfile.gpu.
+#
+#   docker build -f docker/Dockerfile.cpu -t g2t-aml:cpu .
+#   docker run --rm g2t-aml:cpu                          # the quickstart, ~2 s
+#   docker run --rm g2t-aml:cpu make smoke               # the full gate
+#
+# Reproducibility: the base image is pinned by digest, uv by version, and every Python
+# dependency by `uv.lock` installed with --frozen. A tag alone is not a pin -- upstream
+# rebuilds `python:3.11-slim-bookworm` regularly, and an image that silently changes its
+# libc under a locked dependency set is exactly the failure this file exists to prevent.
+
+FROM python:3.11.14-slim-bookworm@sha256:65a93d69fa75478d554f4ad27c85c1e69fa184956261b4301ebaf6dbb0a3543d AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
+    G2T_AML_ROOT=/workspace
+
+# git: RunContext records the SHA (invariant 5), and a missing git makes every run
+#      provenance-less rather than failing loudly.
+# make: the documented entrypoint for every pipeline stage.
+# build-essential: a handful of dependencies still ship sdists.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        make \
+        build-essential \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /usr/local/bin/uv
+
+WORKDIR /workspace
+
+# Dependency layer first, so editing source does not invalidate the install.
+# `stats` (scipy/statsmodels/krippendorff) but NOT `eval`: eval pulls bert-score, which
+# pulls torch, and this image's whole point is that it has none. The statistics modules
+# are under invariant 1 and must be gated rather than skipped -- see pyproject.toml.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --group dev --extra stats --no-install-project
+
+COPY . .
+RUN uv sync --frozen --group dev --extra stats
+
+# data/ and artifacts/ are gitignored and therefore absent from the build context.
+# Recreate them so a container run has somewhere to write; mount real volumes over them
+# for anything beyond the quickstart.
+RUN mkdir -p data/raw data/interim data/processed \
+             artifacts/checkpoints artifacts/metrics artifacts/figures artifacts/runs
+
+# Fail the build if the image cannot do the one thing it promises. Catching this here is
+# worth the ~2 s: an image that builds and then fails its own quickstart is worse than a
+# build failure, because it ships.
+RUN python scripts/14_quickstart.py
+
+# The quickstart is the default because it is what a stranger should see first: one
+# published result, reproduced, in about two seconds.
+CMD ["python", "scripts/14_quickstart.py"]

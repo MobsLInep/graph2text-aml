@@ -7,20 +7,27 @@ abstract: >-
   laundering model output from opaque classification to investigator-usable explanation.
   The system couples a graph attention encoder to a QLoRA-finetuned large language model
   through a learned fusion layer, and is trained on a three-tier corpus constructed for
-  this work because no corpus of (graph, SAR narrative) pairs exists publicly.
+  this work because no corpus of (graph, SAR narrative) pairs exists publicly. This
+  release contains the complete pipeline, the frozen temporal splits, the fact layer, the
+  15,707-narrative Bronze corpus and the trained graph encoder. No generator arm has been
+  trained; RESULTS.md names every experiment that has not run, together with its blocker.
 type: software
 version: 0.1.0
-date-released: "2026-08-01"
+date-released: "2026-08-06"
 license: Apache-2.0
-repository-code: "https://github.com/REPLACE_ME/graph2text-aml"
+repository-code: "https://github.com/MobsLInep/graph2text-aml"
+url: "https://github.com/MobsLInep/graph2text-aml"
 authors:
-  - name: "Graph2Text AML authors"
+  - family-names: Samaddar
+    given-names: Shreyansh
 keywords:
   - anti-money-laundering
   - graph neural networks
   - explainable AI
   - natural language generation
   - financial crime
+  - suspicious activity reports
+  - graph-to-text
 
 references:
   - type: article
@@ -30,7 +37,10 @@ references:
         given-names: Erik
     year: 2023
     collection-title: "Advances in Neural Information Processing Systems, Datasets and Benchmarks Track"
-    notes: "IBM AMLworld — primary development and evaluation substrate."
+    notes: >-
+      IBM AMLworld -- primary development and evaluation substrate. The data is
+      CDLA-Sharing-1.0, not the Apache-2.0 of the IBM/AML-Data repository, which covers
+      only the code.
   - type: conference-paper
     title: "The Shape of Money Laundering: Subgraph Representation Learning on the Blockchain with the Elliptic2 Dataset"
     authors:
@@ -38,4 +48,6 @@ references:
         given-names: Claudio
     year: 2024
     collection-title: "KDD Workshop on Machine Learning in Finance"
-    notes: "Elliptic2 — real-world demonstration substrate; access-gated."
+    notes: >-
+      Elliptic2 -- intended as the real-world demonstration substrate; access-gated.
+      Access was never obtained, and no Elliptic2 result exists in this release.

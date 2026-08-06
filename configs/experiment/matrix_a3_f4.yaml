@@ -1,0 +1,22 @@
+# @package _global_
+# A3/F4 -- fusion ablation, projector axis: a PERCEIVER RESAMPLER instead of the MLP.
+# The only variant permitted to change the soft-token count; the one-to-one projectors
+# refuse a mismatch at construction rather than reshaping.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: matrix_a3_f4
+  description: "Phase 11 A3: S1 with a perceiver-resampler fusion projector."
+  arm: A3_F4
+  device: cuda
+  limit_cases: null
+  notes: ""
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false
+  projector: perceiver

@@ -1,0 +1,26 @@
+# @package _global_
+# B5 -- the Co-Investigator-style agentic comparator, and the closest existing competitor.
+#
+# THIS ARM GETS REAL EFFORT. Generate (from the few-shot draft, not the weaker zero-shot
+# one), self-verify against the record, repair, up to three rounds. The verification is
+# the BASELINE'S OWN model, never our Phase 3 checker: handing it our instrument would
+# build a competitor that does not exist and cannot be cited, and would hand the baseline
+# the exact tool the evaluation scores it with.
+#
+# It is allowed more inference compute per narrative than any of our arms. That asymmetry
+# is RECORDED (AgenticTrace.n_calls) and reported, not corrected away.
+defaults:
+  - matrix_b4
+
+experiment:
+  name: matrix_b5
+  description: "Phase 11 B5: frontier LLM with a generate -> self-verify -> repair loop."
+  arm: B5
+  notes: "Self-reported convergence is not the measured faithfulness; the two are separate columns."
+
+baseline:
+  agentic: true
+  max_repair_rounds: 3
+  # Three, not Silver's two. Silver's limit exists to stop a teacher contorting a corpus
+  # record; this one exists to give a competitor its best configuration.
+  budget_cap_usd: 600.0

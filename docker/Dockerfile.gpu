@@ -1,0 +1,83 @@
+# Graph2Text AML -- GPU image.
+#
+# Covers phases 7-9 and 11-13: the graph encoder, the fusion layer, QLoRA finetuning and
+# the experiment matrix. Everything phases 1-6 and 10 do runs here too, so this image is a
+# superset of Dockerfile.cpu -- but it is roughly 8x larger and pulls CUDA, so use the CPU
+# image for fact-layer, corpus and evaluation work.
+#
+#   docker build -f docker/Dockerfile.gpu -t g2t-aml:gpu .
+#   docker run --rm --gpus all g2t-aml:gpu python -c "import torch; print(torch.cuda.is_available())"
+#   docker run --rm --gpus all -v "$PWD/data:/workspace/data" \
+#              -v "$PWD/artifacts:/workspace/artifacts" g2t-aml:gpu make train-encoder
+#
+# HARDWARE. The encoder (phase 7) is comfortable on any modern card and needs under 4 GB.
+# QLoRA finetuning of Llama-3.1-8B (phase 9) needs **24 GB VRAM minimum** and is
+# comfortable at 48 GB. No generator arm has ever been trained -- see D-068 and
+# RESULTS.md section 2 before scheduling compute against this image.
+#
+# PINNING. Base image by digest, uv by version, Python dependencies by uv.lock --frozen,
+# and the three PyG companion wheels by exact version from the torch-2.4.0+cu121 index.
+# Those three are deliberately absent from uv.lock: their PyPI sdists import torch at
+# build time, so they cannot be resolved into a lockfile at all, and building them from
+# source would compile against whatever CUDA the build host happens to have (D-007).
+#
+# Do not upgrade torch on its own. torch-geometric, the three companion wheels and vllm
+# all move with it (D-005).
+
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04@sha256:eef662e5e56afc7bd9ac1bb9f3c1cb8959d4a6002e7a305374dc14237ca9e73f AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON=3.11 \
+    PATH="/opt/venv/bin:$PATH" \
+    G2T_AML_ROOT=/workspace \
+    # Recorded in run_context.json alongside the seeds, so a reader can tell whether a
+    # number came from a TF32 host. See docs/REPRODUCTION.md section 6.2.
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        make \
+        build-essential \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.10.2 /uv /usr/local/bin/uv
+
+# uv fetches its own CPython, so the CUDA base image needs no system Python and the
+# interpreter is pinned to the same 3.11 the CPU image and CI use.
+RUN uv python install 3.11
+
+WORKDIR /workspace
+
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --group dev --extra eval --extra graph --extra llm --extra human \
+        --no-install-project
+
+# The PyG companion wheels, prebuilt against torch 2.4.0 + cu121 exactly.
+RUN uv pip install --find-links https://data.pyg.org/whl/torch-2.4.0+cu121.html \
+        torch-scatter==2.1.2 \
+        torch-sparse==0.6.18 \
+        torch-cluster==1.6.3
+
+COPY . .
+RUN uv sync --frozen --group dev --extra eval --extra graph --extra llm --extra human
+
+RUN mkdir -p data/raw data/interim data/processed \
+             artifacts/checkpoints artifacts/metrics artifacts/figures artifacts/runs
+
+# Build-time check that does not need a GPU: the CUDA build of torch imports, the PyG
+# stack resolves, and the CPU-only quickstart still passes in this image. Whether a card
+# is visible is a runtime question and is deliberately not asserted here -- CI builders
+# have no GPU, and a build that requires one could never be built in CI.
+RUN python -c "import torch, torch_geometric, torch_scatter, torch_sparse, torch_cluster; \
+        print('torch', torch.__version__, '| PyG', torch_geometric.__version__)" \
+    && python scripts/14_quickstart.py
+
+CMD ["make", "help"]

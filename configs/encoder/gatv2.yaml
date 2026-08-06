@@ -1,0 +1,20 @@
+# @package encoder
+# The primary arm. GATv2, not GAT: the original's attention ranking is static (there is a
+# global ordering of keys every query agrees on), GATv2's is query-dependent, and Brody et
+# al. (2022) show the first is strictly less expressive. See DECISIONS.md D-058.
+name: gatv2
+arch: gatv2
+hidden_dim: 256
+layers: 3
+heads: 8
+concat_heads: true
+dropout: 0.2
+edge_dim: 16
+residual: true
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+# The edge-feature ablation switch. False builds the identical model and zeroes the edge
+# encoder's output, so parameter count and initialisation are unchanged.
+use_edge_features: true

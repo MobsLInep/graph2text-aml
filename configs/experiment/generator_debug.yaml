@@ -1,0 +1,23 @@
+# @package _global_
+# A two-minute wiring run: a handful of cases, the overfit check, no full training.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_debug
+  description: "Phase 9 smoke: overfit check and a few steps on a small slice."
+  arm: S1
+  device: cpu
+  limit_cases: 32
+  notes: "Never report a number from this config."
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false
+training:
+  epochs: 1
+  eval_every: 5
+  save_every: null

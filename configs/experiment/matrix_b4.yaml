@@ -1,0 +1,20 @@
+# @package _global_
+# B4 -- frontier LLM with k=5 in-context exemplars. Same model and prompt as B3; the only
+# difference is the exemplar block.
+#
+# EXEMPLARS COME FROM THE TRAIN SPLIT ONLY, and `baselines.select_exemplars` raises if the
+# pool contains anything else. A test-split exemplar would FLATTER this baseline, which is
+# why the check is mechanical rather than left to review.
+defaults:
+  - matrix_b3
+
+experiment:
+  name: matrix_b4
+  description: "Phase 11 B4: frontier LLM few-shot (k=5)."
+  arm: B4
+  notes: "Exemplars selected by typology match, then a rotation keyed on the case id."
+
+baseline:
+  k_shot: 5
+  exemplar_split: train
+  budget_cap_usd: 250.0

@@ -1,0 +1,25 @@
+# @package _global_
+# Priority 1. The primary arm: GAT encoder + F2 gated fusion + full text.
+#
+# `@package _global_` and real config paths, not a nested `overrides:` block. A block of
+# dotted keys under `experiment` is inert — Hydra never applies it — and the first version
+# of these files had exactly that bug, which composed A1 with shuffle=false and would have
+# trained the control as a second copy of the treatment. tests/unit/test_generator_configs.py
+# pins every arm's composition so it cannot come back.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_s1
+  description: "Phase 9 S1: GATv2 + F2 fusion + serialised facts. The primary arm."
+  arm: S1
+  device: cuda
+  limit_cases: null
+  notes: ""
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false

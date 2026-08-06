@@ -1,0 +1,79 @@
+# @package training
+# Phase 9 generator training. Echoed verbatim into every checkpoint (invariant 5, D-067).
+epochs: 3
+
+# --- The three learning rates. The single most consequential block in this file. ---
+# A single rate across all three does not work, and it fails in a way that looks like
+# success. The LoRA adapters modulate an already-trained 8B model and want 2e-4. The fusion
+# projector is randomly initialised and must travel from wherever nn.Linear put it to
+# inside the LM's embedding distribution; at 2e-4 it is still in transit when the adapters
+# have converged, so the model learns to solve the task from the text alone — permanently,
+# because by then it has no use for the graph. The result is a healthy loss curve, a
+# plausible narrative, and S1 == A1.
+lr: 2.0e-4          # LoRA adapters
+fusion_lr: 1.0e-3   # the projector; an order of magnitude above the adapters
+encoder_lr: 1.0e-5  # the Phase 7 encoder, used only when it is unfrozen
+
+scheduler: cosine
+warmup_ratio: 0.03
+weight_decay: 0.0
+
+per_device_batch_size: 2
+gradient_accumulation: 16   # effective batch 32
+max_seq_len: ${generator.max_seq_len}
+gradient_checkpointing: true
+# Falls back to AdamW with a logged warning when bitsandbytes is absent. The substitution
+# changes the memory profile Phase 13 reports, so it is never silent.
+optim: paged_adamw_8bit
+max_grad_norm: 0.3
+
+# Never turn this off for a real run. Computing loss over the prompt spends capacity
+# teaching the model to reproduce its own instructions, and over the soft-token positions
+# it trains the model to predict an arbitrary placeholder id. The switch exists so the
+# ablation that measures what prompt-loss costs is a config change, to be run once.
+loss_on_completion_only: true
+bf16: true
+seed: 42
+
+# Diagnostics. Every eval_every steps the callbacks generate on ten FIXED held-out cases,
+# score them with the Phase 3 checker, and score the within-run shuffled control on the
+# same cases. See models/generator/callbacks.py for why that control is not the A1 arm.
+eval_every: 100
+save_every: 500
+n_probe_cases: 10
+
+# Refuses to start a full run until the 20-example/100-step overfit check has passed.
+# Leave this on. The bugs it catches — a misaligned loss mask, a detached fusion path, a
+# splice on the wrong positions — are all invisible in the loss curve of a full run.
+require_overfit_check: true
+
+# --- Curriculum. Data, not branches, so the ablation costs one run and no code change. ---
+curriculum:
+  - name: mixed
+    tiers: [bronze, silver]
+    epochs: 1
+  - name: silver_only
+    tiers: [silver]
+    epochs: 2
+  # The optional Gold-train tail. Disabled by default and step-capped when enabled; Gold
+  # TEST items are refused by the loader in every case (corpus/training_data.py).
+  # - name: gold_tail
+  #   tiers: [gold]
+  #   epochs: 1
+  #   max_steps: 200
+
+# --- The inference guard. Weights are a judgement call, recorded in DECISIONS.md. ---
+guard:
+  enabled: true
+  n_candidates: 4
+  temperature: 0.6
+  top_p: 0.9
+  weights:
+    # Largest: a contradicted claim is a false statement in a regulatory filing.
+    contradiction: 0.5
+    # Present so the guard cannot win by selecting the candidate that says least — a
+    # one-sentence narrative has a contradiction rate of zero.
+    coverage: 0.35
+    # Smallest: an unverifiable claim is usually a hedge, not a falsehood.
+    unverifiable: 0.15
+  allow_regeneration: true

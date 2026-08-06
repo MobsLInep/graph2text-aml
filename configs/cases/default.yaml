@@ -1,0 +1,96 @@
+# @package cases
+# Phase 2: case construction, sampling, splitting and auditing.
+#
+# Every value here is recorded verbatim into the case corpus manifest and the split
+# manifest, because the case boundary is a design choice a reviewer will interrogate and
+# "we used the defaults" is not an answer. See DECISIONS.md D-018..D-022.
+name: default
+
+# --- the construction protocol (src/g2t_aml/data/case_extraction.py) ---
+extraction:
+  # Two hops reaches the counterparty-of-a-counterparty, which is where layering becomes
+  # visible. k=1 cannot express any two-sided typology at all; k=3 quadruples case size
+  # for little gain. scripts/02b_sensitivity.py measures both claims.
+  k_hops: 2
+  # Node budget. 150 is well above the largest AMLworld stream (32 transactions) plus its
+  # surrounding context, so pruning is a guard against hubs rather than a routine step.
+  n_max: 150
+  prune_rule: amount_desc      # amount_desc | recency | degree
+  # Never turn this off outside a sensitivity run: pruning that severs the laundering
+  # path removes the evidence the case exists to describe.
+  preserve_laundering_paths: true
+  seed: 1337
+  # Per-node expansion cap. HI-Small's maximum out-degree is 168,672 against a median of
+  # 2; without this one hop through a hub swamps every case. 64 is four times the
+  # 16-degree fan-out AMLworld actually generates, so no typology can be truncated by it.
+  max_neighbours_per_node: 64
+
+# --- which cases get built (src/g2t_aml/data/case_sampling.py) ---
+sampling:
+  # Cases *built*, not cases retained. The temporal split discards every case whose window
+  # straddles a boundary, and with a 48h window over the 12 days laundering streams
+  # actually span that is roughly half the corpus -- measured at 51% retention on
+  # HI-Small. 30,000 built therefore lands near the 12,000 / 1,500 / 1,500 target, and the
+  # achieved counts are recorded in the manifest rather than assumed.
+  n_cases: 30000
+  # HI-Small has only 6,357 accounts touching a laundering transaction and 5,905 usable
+  # positive seeds, so the positive population is capped by the substrate rather than by
+  # preference. The realistic-imbalance stream is where true prevalence is reported.
+  positive_fraction: 0.20
+  # Of the negative population. The gate criterion is >= 0.20, but the temporal split
+  # does not preserve the ratio exactly in each split: a corpus-wide 25% came out as 22.5%
+  # in train and 19.7% in val, which misses the floor. 0.30 gives every split margin.
+  hard_negative_fraction: 0.30
+  # Measured on HI-Small at a 48h window: 77% of proposed licit seeds yield a licit case,
+  # and 14.2% of those clear a 0.5 motif score -- so ~10.9% of seeds become a usable hard
+  # negative, and the candidate pool has to be at least 2.75x the negative population for a
+  # 30% share to be reachable. 8.0 gives a pool of 3.1x, which clears it with margin.
+  # Measured, not guessed; the yield is lower than at wider windows because a shorter
+  # window produces smaller and less structured cases.
+  hard_negative_oversample: 8.0
+  hard_negative_min_score: 0.5
+  window_pad_hours: 12.0
+  # Ceiling on a case window's duration, in hours. This is the parameter that makes a
+  # temporal split possible at all: HI-Small's streams run to 202 hours on a 17.7-day
+  # substrate, and windows that wide straddle every candidate boundary, emptying the val
+  # split entirely. The band a split occupies must be at least one window wide, and three
+  # such bands plus buffers have to fit inside the 12 days over which laundering streams
+  # actually occur -- which rules out anything much above 48h. At 48h, 65% of a stream's
+  # transactions survive into its case and 28% of streams are covered in full; the
+  # sensitivity table reports the trade-off against 72h and 96h. null takes the full
+  # extent and makes a three-way temporal split impossible on this substrate.
+  max_window_hours: 48.0
+  max_seeds_per_stream: 12
+  # No single stratum may exceed this share of the positive population. HI-Small offers
+  # 3,227 unclassified seeds against 232-448 per structural typology, so without this
+  # `unclassified` absorbs every seat the other eight cannot fill and reaches 46%.
+  max_stratum_share: 0.35
+  seed: 1337
+
+# --- the temporal split (src/g2t_aml/data/splits.py) ---
+# No seed key here, deliberately: invariant 2 and D-006. The split is a function of time,
+# not of a random draw, and the manifest it produces is committed.
+split:
+  # Targets, not guarantees. Boundaries are searched on the snap grid for the pair whose
+  # achieved proportions come closest to these; the achieved values are recorded in the
+  # manifest, because on a substrate this temporally compressed they will not match
+  # exactly and pretending otherwise would be the dishonest option.
+  proportions: [0.70, 0.15, 0.15]
+  # The straddle rule already guarantees no case crosses a boundary, so this is margin on
+  # top of it rather than the whole mechanism. Every hour here costs cases.
+  buffer_hours: 6.0
+  boundary_snap_hours: 24.0    # boundaries land at midnight
+  # How much a dropped case counts against a boundary pair, relative to a unit of
+  # proportion error. Without it the search buys an exact 70/15/15 by discarding most of
+  # the corpus.
+  retention_weight: 1.5
+  overlap_mode: report         # report | strict -- see D-021
+
+# --- the realistic-imbalance test stream ---
+realistic:
+  n_cases: 10000
+  seed: 4242
+  # null keeps whatever prevalence the substrate produces under uniform sampling, which
+  # is the honest number and is recorded either way. Setting a float down-samples
+  # suspicious cases to that rate.
+  target_prevalence: null

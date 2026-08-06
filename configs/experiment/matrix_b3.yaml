@@ -1,0 +1,34 @@
+# @package _global_
+# B3 -- frontier LLM, zero-shot, on the serialised fact record.
+#
+# The model version and its release date are recorded here and echoed into the run
+# context. A comparison table whose baseline says only "a frontier model" is one a
+# reviewer cannot reproduce, and stale baselines are a documented desk-reject trigger at
+# this venue.
+experiment:
+  name: matrix_b3
+  description: "Phase 11 B3: frontier LLM zero-shot on serialised facts."
+  arm: B3
+  device: cpu
+  limit_cases: null
+  notes: "One call per case. No exemplars, no verification loop."
+
+baseline:
+  provider: anthropic
+  model: claude-opus-5
+  model_release_date: "2026-02-05"
+  api_key_env: ANTHROPIC_API_KEY
+  max_output_tokens: 4096
+  # Every current frontier Anthropic model REJECTS temperature and top_p with a 400 --
+  # they are not ignored (D-045). Depth comes from `effort`.
+  supports_sampling: false
+  temperature: null
+  top_p: null
+  effort: low
+  thinking: adaptive
+  min_words: 130
+  max_words: 260
+  price_in_per_mtok: 5.0
+  price_out_per_mtok: 25.0
+  budget_cap_usd: 150.0
+  cache_enabled: true

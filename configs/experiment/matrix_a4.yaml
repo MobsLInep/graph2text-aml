@@ -1,0 +1,26 @@
+# @package _global_
+# A4 -- the joint-training ablation. NOTE THE DIRECTION.
+#
+# `generator.freeze_encoder` defaults to TRUE, because unfreezing lets the narrative loss
+# undo the val-AUC-PR selection Phase 7 made. So S1 is the FROZEN configuration and this
+# arm is the one that UNFREEZES, at encoder_lr 1e-5 -- the third of the three learning
+# rates, which exists for exactly this arm (D-070). The results table labels the row by
+# what it varies, not by its identifier.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: matrix_a4
+  description: "Phase 11 A4: S1 with the encoder UNFROZEN and jointly trained."
+  arm: A4
+  device: cuda
+  limit_cases: null
+  notes: "The one arm where encoder_lr is used."
+
+generator:
+  text_mode: full
+  use_fusion: true
+  freeze_encoder: false
+fusion:
+  gated: true
+  shuffle: false

@@ -1,0 +1,12 @@
+# @package _global_
+# B1 -- the faithfulness ceiling. The deterministic Bronze template, read from the
+# committed corpus rather than re-rendered: Phase 7 has since populated `model_signal`,
+# so regenerating Bronze would push the encoder's own score into the serialisation
+# baseline and nothing would fail (D-063).
+experiment:
+  name: matrix_b1
+  description: "Phase 11 B1: Bronze template. Faithfulness ceiling."
+  arm: B1
+  device: cpu
+  limit_cases: null
+  notes: "No model. Scores 1.0000 Zero-Hallucination by construction; its H9 rate is 0.9179."

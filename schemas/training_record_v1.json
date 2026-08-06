@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/graph2text-aml/schemas/training_record_v1.json",
+  "title": "training_record v1",
+  "description": "One (graph, facts, narrative) training example. FROZEN at 1.0.0 in Phase 4.\n\nThe SAME schema carries all three corpus tiers. Bronze, Silver and Gold differ only in `tier` and in the `generator` block; every other field means the same thing in all three, and the ten-point validation harness in g2t_aml.corpus.validate gates all three against this document. That is deliberate: a tier-specific schema would let the tiers drift apart in exactly the places a reviewer would want them comparable, and would force a migration the moment Silver landed.\n\nThe record is SELF-CONTAINED. `facts` holds the complete case_facts record rather than a pointer to one, so a narrative can always be re-verified against the record it was actually written from, even if the fact store is regenerated later. Verification that reads a *current* fact record rather than the one the narrative was rendered from is not verification, it is a coincidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "dataset",
+    "split",
+    "tier",
+    "facts",
+    "graph_ref",
+    "serialised_facts",
+    "target_narrative",
+    "target_slots",
+    "generator",
+    "verification"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "description": "Frozen. Distinct from facts.schema_version: the training record and the fact record version independently, and both are recorded (invariant 3)."
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The case this example describes. Equals facts.case_id; a test asserts it."
+    },
+    "dataset": {
+      "type": "string",
+      "enum": ["amlworld_hi_small", "amlworld_hi_medium", "amlworld_hi_large", "elliptic2"],
+      "description": "Substrate key. Equals facts.dataset."
+    },
+    "split": {
+      "type": "string",
+      "enum": ["train", "val", "test"],
+      "description": "Read from the FROZEN Phase 2 split manifest, never recomputed (invariant 2). A record whose split disagrees with the manifest fails validation check 10."
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["bronze", "silver", "gold"],
+      "description": "Which corpus tier produced the narrative."
+    },
+    "facts": {
+      "$ref": "case_facts_v1.json",
+      "description": "The complete case_facts record, embedded verbatim. See the title note on self-containment."
+    },
+    "graph_ref": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_./-]+#[A-Za-z0-9_.-]+$",
+      "description": "Repository-relative reference to the case subgraph, as `<case store>#<case_id>`, e.g. `data/processed/amlworld_hi_small/cases#amlworld_hi_small-00036141b3c9b49a`. Resolved by g2t_aml.corpus.graphref, which checks not merely that the store exists but that the referenced subgraph has exactly the node and edge counts `facts.structure` reports. A reference that resolves to a different graph than the facts describe is the failure this field exists to make detectable."
+    },
+    "serialised_facts": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The flat-text serialisation of `facts` (g2t_aml.facts.serialiser, compact style). This is the B7 baseline's input and the fine-tuning prompt's fact block."
+    },
+    "target_narrative": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The narrative itself, plain text. The generation target."
+    },
+    "target_slots": {
+      "type": "array",
+      "description": "Character-span alignment from narrative text back to fact fields. Present on every tier: Bronze emits them by construction, Silver carries through the ones its rewrite preserved, Gold has them annotated by hand. They are what makes Phase 10's Layer-2 evaluation an alignment problem rather than an LLM-extraction problem.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field_path", "span", "rendered_value", "raw_value", "claim_type"],
+        "properties": {
+          "field_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Dotted path into the fact record, e.g. `motifs.fan_out.width`. Empty-pathed slots are not permitted: a slot that names no field cannot be checked, and an unbounded slot is exactly what this alignment exists to prevent. Qualitative descriptors instead name their binding's field."
+          },
+          "span": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "integer", "minimum": 0 },
+            "description": "[start, end) character offsets into target_narrative. `target_narrative[start:end] == rendered_value` is asserted by validation."
+          },
+          "rendered_value": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The text actually written at that span, e.g. `294,203.00 US Dollar`. The claim the checker verifies is PARSED BACK OUT OF THIS STRING, never taken from raw_value — otherwise the round trip would compare the record against itself and prove nothing."
+          },
+          "raw_value": {
+            "description": "The value read from the fact record before formatting. Recorded for diagnostics and for measuring rounding error; it is deliberately NOT the value that gets checked."
+          },
+          "claim_type": {
+            "type": "string",
+            "enum": ["numeric", "categorical", "temporal", "qualitative", "entity", "regulatory"],
+            "description": "Selects the tolerance rule when the slot is turned back into a g2t_aml.facts.checkers.Claim."
+          }
+        }
+      }
+    },
+    "generator": {
+      "type": "object",
+      "description": "How this narrative was produced. The only block whose shape differs by tier, and it is open (`additionalProperties: true`) precisely so Silver can record its model and prompt hash, and Gold its annotator id, without a schema bump.",
+      "required": ["method", "renderer_version"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["template", "llm_rewrite", "human"],
+          "description": "template -> Bronze, llm_rewrite -> Silver, human -> Gold."
+        },
+        "family": {
+          "type": "string",
+          "description": "Template family, e.g. `gather_scatter`. Present for Bronze and for any Silver record whose Bronze source is known."
+        },
+        "variant": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Which surface realisation of the family was used."
+        },
+        "renderer_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Version of the code that produced the narrative. Bumped whenever a change alters rendered text, so a corpus can be attributed to an exact renderer."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "The seed in force. Bronze is deterministic from case_id and does not consult it for variant choice; it is recorded so that is checkable rather than merely claimed."
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "contradicted", "unverifiable", "unverifiable_rate", "n_claims"],
+      "description": "The result of running g2t_aml.facts.checkers over this narrative's own claims, against its own embedded fact record. Written at build time and re-derivable at any point; validation check 4 recomputes it rather than trusting it.",
+      "properties": {
+        "supported": { "type": "integer", "minimum": 0 },
+        "contradicted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must be 0 for a record to pass validation, on every tier."
+        },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "unverifiable_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "n_claims": { "type": "integer", "minimum": 1 },
+        "critical_error_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "by_hallucination_class": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "length": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Recorded so the length gate is auditable without re-tokenising, and so the tokeniser that measured it is never in doubt.",
+      "required": ["n_tokens", "tokenizer"],
+      "properties": {
+        "n_tokens": { "type": "integer", "minimum": 0 },
+        "n_words": { "type": "integer", "minimum": 0 },
+        "n_chars": { "type": "integer", "minimum": 0 },
+        "tokenizer": {
+          "type": "string",
+          "description": "Identifier of the token counter used, e.g. `heuristic-bpe-v1` or `meta-llama/Llama-3.1-8B`. See DECISIONS D-039."
+        }
+      }
+    },
+    "salience": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Which salient fields this case requires and which the narrative actually mentions. Phase 6/10 read this; Phase 4 records it so adequacy is measurable without re-deriving the requirement.",
+      "properties": {
+        "required": { "type": "array", "items": { "type": "string" } },
+        "excused": { "type": "array", "items": { "type": "string" } },
+        "mentioned": { "type": "array", "items": { "type": "string" } },
+        "coverage": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

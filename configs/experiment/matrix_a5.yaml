@@ -1,0 +1,27 @@
+# @package _global_
+# A5 -- the guard's contribution. NO TRAINING RUN: this is S1's checkpoint decoded with
+# the inference guard disabled, so it costs an inference pass and depends on S1.
+#
+# Guarded and unguarded are TWO SEPARATE TABLE ROWS and neither is the headline on its own
+# (D-073). Reporting only the guarded number would attribute the guard's selection to the
+# architecture; reporting only the unguarded one would understate a component that ships.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: matrix_a5
+  description: "Phase 11 A5: S1 decoded with the inference guard OFF."
+  arm: A5
+  device: cuda
+  limit_cases: null
+  notes: "Reads S1's checkpoint. Trains nothing."
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  gated: true
+  shuffle: false
+training:
+  guard:
+    enabled: false

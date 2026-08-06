@@ -27,8 +27,19 @@ from g2t_aml.utils.seeding import seed_everything
 CONFIG_DIR = str(Path(__file__).resolve().parents[1] / "configs")
 
 
+#: Exit code captured out of the Hydra-decorated entrypoint.
+#:
+#: ``@hydra.main`` **discards its wrapped function's return value** — it returns None
+#: regardless — so the long-standing ``sys.exit(main())`` always exited 0 and every
+#: documented "exits non-zero when the gate fails" in this repository was silently untrue.
+#: A failing gate looked identical to a passing one to CI, to ``make``, and to any caller
+#: checking ``$?``. Capturing the code out of a module-level cell is the smallest fix that
+#: keeps the Hydra entrypoint shape. Found in Phase 5; see PHASE_LOG.
+_EXIT_CODE: list[int] = []
+
+
 @hydra.main(version_base="1.3", config_path=CONFIG_DIR, config_name="config")
-def main(cfg: DictConfig) -> int:
+def _run(cfg: DictConfig) -> None:
     """Run the Phase 0 smoke check.
 
     Args:
@@ -81,7 +92,17 @@ def main(cfg: DictConfig) -> int:
         summary["seeded_backends"] = [k for k in ("numpy", "torch") if seeds.get(k)]
         summary["run_dir"] = str(run_dir)
 
-    return 0
+    _EXIT_CODE.append(0)
+
+
+def main() -> int:
+    """Run the Hydra entrypoint and return its exit code.
+
+    Returns:
+        The code ``_run`` produced, or 0 when it produced none.
+    """
+    _run()
+    return _EXIT_CODE[-1] if _EXIT_CODE else 0
 
 
 if __name__ == "__main__":

@@ -2,10 +2,42 @@
 # The technical contribution: how graph structure enters the LM embedding space.
 name: prefix
 _target_: g2t_aml.models.fusion.PrefixFusion   # implemented in Phase 8
-graph_dim: ${encoder.out_dim}
+# Phase 7 removed the `out_dim` placeholder: an arm's output width IS its `hidden_dim`,
+# because the attention-pooling readout emits [B, k, hidden_dim] and there is no
+# projection after it. Pointing at a second, separately-declared width was how the two
+# could silently disagree.
+graph_dim: ${encoder.hidden_dim}
 lm_dim: 4096          # Llama-3.1-8B hidden size
-num_prefix_tokens: 16
+# Must equal encoder.n_pooled_tokens: the fusion layer consumes the pooled tokens the
+# encoder already produces rather than pooling a second time (see models/encoder/base.py).
+num_prefix_tokens: ${encoder.n_pooled_tokens}
 projector: mlp        # {linear, mlp, perceiver}
 projector_hidden: 2048
 dropout: 0.05
 layer_norm: true
+
+# --- Phase 8, implemented in src/g2t_aml/models/fusion/ ---
+
+# F2 when true, F1 when false. This is the ONLY difference between the two variants, which
+# is what makes the F1-vs-F2 comparison a measurement of the gate rather than of two
+# separately-tuned models. The gate is also the cheapest early read on Gate 8: a gate that
+# collapses towards zero is the model closing the graph channel.
+gated: true
+
+# Soft-token budget. null means num_prefix_tokens. Only the perceiver projector may differ;
+# the one-to-one projectors refuse a mismatch at construction rather than reshaping.
+n_output_tokens: null
+
+# RMS the soft tokens are scaled to. null means "measure it from the base model's own input
+# embedding table at build time", which is what Phase 9 does. A hardcoded constant would be
+# wrong for a different base model or a different quantisation setting.
+target_rms: null
+
+# --- The A1 control. Set by configs/experiment/generator_a1.yaml, never by hand. ---
+# When true the pooled tokens are deranged before projection, so every narrative is paired
+# with a DIFFERENT case's graph. Read src/g2t_aml/models/fusion/control.py before changing
+# anything here: the project's central claim is a comparison against this arm.
+shuffle: false
+# across_batch | within_case | noise. across_batch is the control the claim rests on;
+# within_case only tests order-sensitivity and is a much weaker null.
+shuffle_mode: across_batch

@@ -1,0 +1,29 @@
+# @package _global_
+# A6 -- generality. S1's recipe on a second base model.
+#
+# MATTERS MORE THAN IT LOOKS. A single-base-model result generalises weakly, and a fusion
+# layer that works only on Llama's embedding geometry is a property of Llama rather than a
+# method. Note that `fusion.target_rms` is null, meaning "measure it from THIS base
+# model's own input embedding table at build time" -- so this arm needs no constant
+# changed, which is itself the claim being tested.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: matrix_a6
+  description: "Phase 11 A6: S1's recipe on Qwen3-8B."
+  arm: A6
+  device: cuda
+  limit_cases: null
+  notes: "Second base model. Reports whether the fusion layer transfers."
+
+generator:
+  base_model: Qwen/Qwen3-8B
+  text_mode: full
+  use_fusion: true
+fusion:
+  # Qwen3-8B's hidden size, not Llama's 4096. A mismatch here is caught at construction by
+  # the projector, but stating it in the config is what makes the arm reproducible.
+  lm_dim: 4096
+  gated: true
+  shuffle: false

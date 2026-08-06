@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>visibility timer</title>
+<style>
+  body { margin: 0; font: 12px/1.4 system-ui, sans-serif; color: #666; }
+  #t { padding: 2px 0; }
+</style>
+<div id="t">timing…</div>
+<script>
+  // A Streamlit bidirectional component, implemented against the postMessage protocol
+  // directly rather than through streamlit-component-lib, so that the whole component is
+  // one static file with no build step. `make install` must not need node.
+  //
+  // What this measures that the server cannot: `visibilitychange` and `blur` fire in the
+  // browser and nowhere else. A rater who switches tab for four minutes is invisible to
+  // Python -- the Streamlit script is not re-run, no widget changes, and the server-side
+  // clock keeps counting. That four minutes lands in time-to-usable-draft as if it were
+  // reading time, and a handful of them move a mean further than a real effect does.
+  //
+  // The accumulator is deliberately monotonic and never reset by a rerun: Streamlit
+  // re-renders this iframe on every script run, and a timer that restarted then would
+  // report time since the last slider drag.
+
+  const started = performance.now();
+  let hiddenSince = document.visibilityState === "hidden" ? started : null;
+  let hiddenTotal = 0;
+  let blurs = 0;
+
+  function hiddenNow() {
+    return hiddenTotal + (hiddenSince === null ? 0 : performance.now() - hiddenSince);
+  }
+
+  function activeNow() {
+    return Math.max(0, performance.now() - started - hiddenNow());
+  }
+
+  function send() {
+    window.parent.postMessage(
+      {
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value: {
+          active_ms: activeNow(),
+          hidden_ms: hiddenNow(),
+          n_blurs: blurs,
+        },
+        dataType: "json",
+      },
+      "*"
+    );
+  }
+
+  function setFrameHeight() {
+    window.parent.postMessage(
+      { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: 24 },
+      "*"
+    );
+  }
+
+  function onHide() {
+    if (hiddenSince === null) {
+      hiddenSince = performance.now();
+      blurs += 1;
+    }
+  }
+
+  function onShow() {
+    if (hiddenSince !== null) {
+      hiddenTotal += performance.now() - hiddenSince;
+      hiddenSince = null;
+    }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    document.visibilityState === "hidden" ? onHide() : onShow();
+    send();
+  });
+  window.addEventListener("blur", onHide);
+  window.addEventListener("focus", onShow);
+
+  // One second is fast enough that a submission never reads a value more than a second
+  // stale, and slow enough that a two-hour session is a few thousand messages rather than
+  // a few hundred thousand.
+  setInterval(() => {
+    document.getElementById("t").textContent =
+      "reading time " + (activeNow() / 1000).toFixed(0) + "s" +
+      (blurs ? " (" + blurs + " interruption" + (blurs === 1 ? "" : "s") + " not counted)" : "");
+    send();
+  }, 1000);
+
+  window.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "streamlit:render") {
+      setFrameHeight();
+      send();
+    }
+  });
+
+  window.parent.postMessage({ isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*");
+  setFrameHeight();
+  send();
+</script>

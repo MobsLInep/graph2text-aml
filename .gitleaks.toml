@@ -1,0 +1,46 @@
+# Secret-scanning configuration (Phase 14, invariant 8).
+#
+# Used by `make secret-scan`, by the pre-commit hook and by the scheduled release
+# verification workflow. The scan runs over the **full git history**, not just the
+# working tree: a secret removed in a later commit is still published by a `git clone`.
+#
+# Every allowlist entry below is a documented false positive with the reason it is one.
+# Do not add a broad path or regex here to silence a real finding -- rotate the credential
+# and rewrite the history instead.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "g2t-aml-provider-key"
+description = "Anthropic or OpenAI API key pasted into the tree"
+regex = '''(?i)\b(sk-ant-[a-z0-9_\-]{20,}|sk-[a-zA-Z0-9]{32,})\b'''
+keywords = ["sk-ant-", "sk-"]
+
+[[rules]]
+id = "g2t-aml-hf-token"
+description = "HuggingFace Hub access token"
+regex = '''\bhf_[a-zA-Z0-9]{30,}\b'''
+keywords = ["hf_"]
+
+[[rules]]
+id = "g2t-aml-wandb-key"
+description = "Weights & Biases API key"
+regex = '''(?i)wandb[_\-.]?(api[_\-.]?)?key\s*[:=]\s*['"]?[0-9a-f]{40}['"]?'''
+keywords = ["wandb"]
+
+[allowlist]
+description = "Documented false positives, Phase 14 audit 2026-08-06"
+
+# `heuristic-bpe-v1` is the name of the deterministic token counter in
+# src/g2t_aml/corpus/tokenization.py -- not a model identifier and not a credential.
+# The default generic-api-key rule matches it because it follows `tokenizer:`.
+regexes = [
+  '''heuristic-bpe-v1''',
+]
+
+# uv.lock is a lockfile of public PyPI URLs and sha256 wheel digests. Those digests are
+# integrity hashes published by PyPI, and a scanner reads them as high-entropy strings.
+paths = [
+  '''uv\.lock''',
+]

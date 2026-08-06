@@ -1,0 +1,70 @@
+# Docker build context exclusions.
+#
+# WITHOUT THIS FILE THE BUILD CONTEXT IS ABOUT 8 GB. `.gitignore` does not apply to
+# `docker build`, so `COPY . .` otherwise sweeps in data/ (1.5 GB), .venv/ (6.3 GB),
+# artifacts/ (143 MB) and wandb/ -- all of which are gitignored precisely because they do
+# not belong in a distributable. The resulting image is enormous, the build is slow, and
+# the layer cache is invalidated by any run output.
+#
+# Keep this file in step with .gitignore. The release verification asserts that a clean
+# clone carries no data or artifacts (`no-data-committed`); this is the same rule for the
+# image, and nothing enforces it automatically.
+
+# --- data and results: never in an image; mount them as volumes instead ---
+data/
+artifacts/
+dist/
+wandb/
+outputs/
+multirun/
+
+# --- environments and build products ---
+.venv/
+venv/
+build/
+*.egg-info/
+.eggs/
+
+# --- model weights ---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.gguf
+
+# --- caches ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# --- secrets: belt and braces. These must never reach an image layer, because a layer
+#     is readable even after a later layer deletes the file. ---
+.env
+.env.*
+!.env.example
+*.pem
+credentials.json
+
+# --- git: the image does not need history, and it is the largest thing left.
+#     RunContext reads the SHA at run time; pass it as a build arg if a build needs it. ---
+.git/
+.github/
+
+# --- editors / os ---
+.idea/
+.vscode/
+.DS_Store
+
+# --- exceptions: these ARE needed in the image ---
+# tests/fixtures/ carries the quickstart fixture the image scores at build time, and
+# tests/golden/ carries what it is asserted against. Neither matches a rule above, but
+# both are load-bearing for `RUN python scripts/14_quickstart.py` -- do not add a broad
+# `tests/` exclusion without moving them.

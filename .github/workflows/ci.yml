@@ -27,17 +27,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
-          version: "0.4.20"
+          version: "0.10.2"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
       - name: Set up Python 3.11
         run: uv python install 3.11
 
-      # Light environment only: no CUDA, no torch. Phases 1-6 and 10 need none of it,
-      # and a CUDA install would push CI past ten minutes.
+      # Light environment: no CUDA, no torch. Phases 1-6 and 10 need none of it, and a
+      # CUDA install would push CI past ten minutes.
+      #
+      # `--extra stats` is scipy/statsmodels/krippendorff and pulls no torch. Without it
+      # `eval/statistics.py` and `experiments/aggregate.py` -- both measurement code under
+      # invariant 1 -- either fail or skip here, and a gate that skips the statistics is
+      # not gating the thing most worth gating.
       - name: Install light environment
-        run: uv sync --group dev --frozen
+        run: uv sync --group dev --extra stats --frozen
 
       - name: Lint
         run: make lint

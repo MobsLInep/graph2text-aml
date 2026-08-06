@@ -1,0 +1,21 @@
+# @package _global_
+# Priority 5. G-Retriever-style: F1 (ungated) prefix fusion + full text. Deferrable to
+# Phase 11 if compute runs out; S1, A1, S2 and B7 are the minimum viable set.
+defaults:
+  - override /training: generator
+
+experiment:
+  name: generator_b8
+  description: "Phase 9 B8: F1 ungated prefix fusion + full text. The published-baseline arm."
+  arm: B8
+  device: cuda
+  limit_cases: null
+  notes: ""
+
+generator:
+  text_mode: full
+  use_fusion: true
+fusion:
+  # F1: ungated. The only difference from S1.
+  gated: false
+  shuffle: false

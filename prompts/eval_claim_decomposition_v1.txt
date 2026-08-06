@@ -1,0 +1,65 @@
+# eval_claim_decomposition_v1
+#
+# Method B, stage one: split a SAR narrative into atomic factual claims.
+#
+# Versioned as a file and hashed for the same reason the Silver prompts are: this prompt
+# produces one half of the extractor-agreement kappa reported in the paper, and a kappa
+# whose prompt cannot be reconstructed is not a reproducible number.
+#
+# WHY DECOMPOSITION IS A SEPARATE CALL FROM VERIFICATION.
+# Asking one call to both split and adjudicate lets the model reach a verdict first and
+# then choose a decomposition that supports it -- the claims it emits become a function of
+# what it already decided about the narrative, and the resulting claim set cannot be
+# compared with Method A's, which was built with no access to any verdict. Splitting the
+# stages costs a second call per case and buys an independent claim boundary, which is
+# precisely what the boundary-alignment half of the kappa measures.
+#
+# THE MODEL IS SHOWN NO FACT RECORD IN THIS STAGE. Deliberately: a decomposer that can see
+# the facts will silently merge or drop claims the facts do not speak to, which biases the
+# unverifiable rate downward on exactly the claims that matter most.
+#
+# Lines beginning with '#' before the first section marker are a header comment and are
+# NOT sent to the model. They are inside the hashed content deliberately.
+
+<<<SYSTEM>>>
+You decompose Suspicious Activity Report narratives into atomic factual claims. You do
+not judge whether a claim is true. You do not have the underlying data and must not
+speculate about it.
+
+An ATOMIC CLAIM is a single assertion that could be independently checked against a
+structured record: one quantity, one relationship, one attribute, one temporal fact. Split
+compound sentences. "The account received 42,000 US Dollar from 9 counterparties and sent
+38,000 US Dollar onward" is three claims, not one.
+
+Rules:
+
+1. Every claim must be a self-contained declarative sentence. Resolve pronouns and
+   definite references to the entity they refer to, using only what the narrative itself
+   says.
+2. Copy the exact substring of the narrative each claim was drawn from into `evidence`.
+   It must appear in the narrative character for character. This is what locates the
+   claim, so an approximation makes the claim unlocatable and it will be discarded.
+3. Do not emit claims for hedging language, structural scaffolding, recommendations, or
+   statements about the report itself ("this report concerns", "further review is
+   recommended"). Those assert nothing about the case.
+4. Do emit claims for qualitative characterisations that imply a quantity — "rapid
+   dispersal", "a large proportion", "an unusually dense cluster". They are checkable
+   assertions in qualitative clothing and omitting them is how a hallucination escapes.
+5. Do emit claims that name an entity type, a real-world identity, a regulation, or an
+   intent. Those are the assertions most likely to be unsupported, and the point of this
+   exercise is to surface them, not to tidy them away.
+6. Classify each claim's `type` as exactly one of: numeric, temporal, entity,
+   categorical, qualitative, regulatory.
+
+Return ONLY a JSON object, with no prose before or after it and no markdown fence:
+
+{"claims": [{"text": "...", "evidence": "...", "type": "numeric"}, ...]}
+
+If the narrative asserts nothing checkable, return {"claims": []}.
+
+<<<USER>>>
+Decompose the following SAR narrative into atomic factual claims.
+
+NARRATIVE
+---------
+{narrative}

@@ -2,7 +2,8 @@
 name: default
 
 # Faithfulness is the headline family; surface-overlap metrics are reported but are
-# explicitly not the contribution.
+# explicitly not the contribution. The ordering of these blocks is the ordering the
+# report prints them in, and that is deliberate -- see src/g2t_aml/eval/report.py.
 faithfulness:
   enabled: true
   check_unsupported_facts: true
@@ -21,6 +22,35 @@ human:
   min_annotators: 2
 
 stats:
-  bootstrap_samples: 1000
+  # 10,000, not 1,000. At a thousand resamples the interval endpoints move in the third
+  # decimal between seeds, which is the precision the tables quote -- so a re-run would
+  # move a published bound for no reason but the resampling.
+  bootstrap_samples: 10000
   confidence: 0.95
-  paired_test: bootstrap
+  # Wilcoxon signed-rank, not a paired bootstrap test. Both are defensible; the signed
+  # rank is what a reviewer expects for paired per-case metrics, and the paired bootstrap
+  # interval is reported beside it, so the reader gets both readings. See D-079.
+  paired_test: wilcoxon
+  correction: holm
+  alpha: 0.05
+
+# Systems to score, as `name: path-to-generations.jsonl`. Empty by default, which scores
+# Bronze alone -- the CI gate. Add arms from the command line:
+#   uv run python scripts/10_evaluate.py eval.systems.s1=artifacts/runs/.../generations.jsonl
+systems: {}
+
+# Cap the number of records read, for smoke runs. 0 means all. A number here makes every
+# metric a metric over a subset, and the report records `n` beside each one.
+limit: 0
+
+# Bronze is faithful by construction, so scoring it against its own fact records must come
+# out at 100% Zero-Hallucination. Setting this false lets a broken build be inspected;
+# using it to ship one would be a decision, not a configuration.
+fail_on_bronze_gate: true
+
+# Method B (the LLM claim extractor) and the agreement kappa. Off by default: it costs
+# money and needs credentials, and the harness must run in CI without either.
+agreement:
+  enabled: false
+  sample_size: 300
+  teacher: null

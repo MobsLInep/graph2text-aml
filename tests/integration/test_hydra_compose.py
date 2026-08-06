@@ -65,7 +65,11 @@ def test_default_config_composes_and_resolves(cfg_factory):
     resolved = OmegaConf.to_container(cfg, resolve=True)
     assert resolved["seed"] == 42
     assert resolved["data"]["name"] == "amlworld"
-    assert resolved["encoder"]["name"] == "gat"
+    # Phase 7 replaced the `gat` placeholder with the six real arms; `gatv2` is the
+    # primary and the default. See DECISIONS.md D-058 for why not the original GAT.
+    assert resolved["encoder"]["name"] == "gatv2"
+    assert resolved["encoder"]["arch"] == "gatv2"
+    assert resolved["training"]["early_stop_metric"] == "val_auc_pr"
     assert resolved["fusion"]["name"] == "prefix"
     assert resolved["corpus"]["tier"] == "bronze"
     assert resolved["experiment"]["name"] == "debug"
@@ -92,8 +96,15 @@ def test_hydra_run_dir_template_points_at_artifacts_runs(configs_dir):
 
 
 def test_schema_version_is_pinned_and_propagates(cfg_factory):
+    # Asserted against the CODE constant rather than a literal. Phase 0 hardcoded "0.1.0"
+    # here and Phase 3 froze the schema at 1.0.0, which made this test fail for the right
+    # reason but in a way that needed a hand edit. Binding it to the source of truth means
+    # the next bump cannot leave a stale literal behind, and invariant 9's four-way
+    # agreement is checked in test_facts_coverage.py.
+    from g2t_aml.facts.schema import CASE_FACTS_SCHEMA_VERSION
+
     cfg = cfg_factory()
-    assert cfg.schema_version.case_facts == "0.1.0"
+    assert cfg.schema_version.case_facts == CASE_FACTS_SCHEMA_VERSION
     assert cfg.corpus.schema_version == cfg.schema_version.case_facts
 
 

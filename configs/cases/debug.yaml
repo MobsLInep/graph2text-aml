@@ -1,0 +1,13 @@
+# @package cases
+# A small case build for smoke runs and tests. Same protocol, fewer cases: nothing here
+# changes how a case is constructed, only how many are.
+defaults:
+  - default
+
+name: debug
+
+sampling:
+  n_cases: 400
+
+realistic:
+  n_cases: 300

@@ -1,15 +1,136 @@
 # @package corpus
 # Tier 2: LLM rewrites of Bronze, each gated by the same verifier used at evaluation
-# time (run in reverse). A rewrite that asserts an unsupported or masked fact is
-# rejected, not repaired.
+# time (run in reverse). A rewrite that still asserts an unsupported or masked fact
+# after a bounded repair is DISCARDED, and the discard is logged as a result.
+#
+# Silver is verified synthetic supervision, not distillation. Three things make that
+# claim mechanical rather than rhetorical, and all three are enforced in code:
+#   1. two teachers, from different families, balanced across typology and split;
+#   2. every record verified against its fact record, never against the other teacher;
+#   3. evaluation in Phase 10 against human-authored Gold, never against Silver.
 tier: silver
 name: silver
 source_tier: bronze
-rewriter_model: null           # set per-experiment
 schema_version: ${schema_version.case_facts}
+training_record_schema_version: "1.0.0"
+
+# Cases come from the FROZEN Phase 2 manifest, same as Bronze. A case outside it has no
+# split and validation check 10 fails it rather than guessing.
+source: split_manifest
+min_nodes: 2
+limit: 0                       # 0 means every eligible case
+tokenizer: heuristic-bpe-v1
+
+# --- teachers ----------------------------------------------------------------
+# TWO IS A METHODOLOGICAL REQUIREMENT, NOT A COST DECISION. A single-teacher corpus is
+# one model's style, and `specs_from_config` refuses to build a run from fewer than two
+# families rather than warning about it.
+#
+# `supports_sampling` is not a preference. Every current frontier Anthropic model --
+# Opus 5, Sonnet 5, Opus 4.8, 4.7 -- REJECTS temperature and top_p with a 400. Setting
+# it true for such a model fails every call in the run. Those teachers get their surface
+# diversity from the per-case style directive in prompts.py and their depth from
+# `effort`, both of which are deterministic and recorded. See DECISIONS.md D-045.
+teachers:
+  - key: frontier
+    family: frontier
+    provider: anthropic
+    model: claude-opus-5
+    max_output_tokens: 4096
+    supports_sampling: false   # rejects temperature/top_p; do not set true
+    temperature: null
+    top_p: null
+    seed: null                 # not offered by this provider; recorded as null, not faked
+    effort: low                # a constrained rewrite from a complete record, not a hard task
+    thinking: adaptive         # NOT disabled: disabling it on this family risks internal
+                               # tags leaking into the visible text, and a leaked tag would
+                               # land verbatim in a corpus narrative
+    api_key_env: ANTHROPIC_API_KEY
+    price_in_per_mtok: 5.0
+    price_out_per_mtok: 25.0
+    price_cache_read_per_mtok: 0.5
+
+  - key: open_weights
+    family: open_weights
+    provider: openai_compatible
+    model: meta-llama/Llama-3.3-70B-Instruct
+    max_output_tokens: 1024
+    supports_sampling: true    # an OpenAI-compatible server accepts both
+    temperature: 0.7
+    top_p: 0.95
+    seed: ${seed}
+    effort: null
+    thinking: null
+    api_key_env: OPENWEIGHTS_API_KEY
+    base_url: null             # REQUIRED before a real run: the vLLM / hosted endpoint
+    price_in_per_mtok: 0.60
+    price_out_per_mtok: 0.60
+
+# --- generation --------------------------------------------------------------
+generation:
+  # Word band offered to the teacher. Inside the harness's [80, 400] token gate, in words
+  # rather than tokens: a model asked for the ceiling writes to the ceiling.
+  min_words: 130
+  max_words: 260
+  # Repair attempts before discard. Two. Past that a model stops repairing and starts
+  # contorting -- it satisfies the checker by deleting the sentence carrying the finding.
+  max_repair_attempts: 2
+  concurrency: 8
+  # 20 records, projected cost and quality, nothing written.
+  dry_run: false
+  dry_run_records: 20
+  resume: true
+
+# --- verification ------------------------------------------------------------
+# THESE ARE THE STANDARD, NOT KNOBS. Raising the unverifiable budget to reduce the
+# discard rate changes the measurement to fit the result: UNVERIFIABLE is the bucket that
+# collects compliance-dangerous assertions the graph cannot back.
 verification:
   enabled: true
-  max_attempts: 3
+  max_unverifiable_rate: 0.05
+  # Share of the typology's salient fields a rewrite must still carry. Omission (H9) is
+  # the one hallucination class detected by absence -- neither the contradiction count nor
+  # the unverifiable rate can see a rewrite that simply drops half the findings.
+  min_fact_recall: 0.95
   reject_on_unsupported_fact: true
   reject_on_masked_fact: true  # invariant 4
-  min_fact_recall: 0.95
+  # Abort with a non-zero exit when any written record fails the ten-point harness.
+  fail_on_gate: true
+  # Acceptance gate: the harness must also pass on a random sample of at least this size.
+  gate_sample_size: 500
+  # Fail the build if the discard rate exceeds this. It is a gate on the run, not a target
+  # to tune the thresholds toward: if it trips, the finding is the discard rate.
+  max_discard_rate: 0.15
+
+# --- cost --------------------------------------------------------------------
+budget:
+  # Hard cap in USD. The job HALTS here; it does not warn. Planning estimate for two
+  # teachers over ~12k eligible cases at ~2k in / 500 out plus ~20% repair passes is
+  # $190-620, so the default leaves headroom without leaving the run uncapped.
+  cap_usd: 700.0
+  # Content-addressed on (prompt_hash, model, temperature, top_p, seed, case_id, kind,
+  # attempt). A re-run after a crash re-pays for nothing.
+  cache_enabled: true
+  cache_dir: ${paths.artifacts_dir}/silver_cache
+  max_retries: 5
+  retry_base_delay_s: 1.0
+  retry_max_delay_s: 60.0
+  request_timeout_s: 300.0
+
+# --- quality filtering -------------------------------------------------------
+quality:
+  # MinHash LSH across Silver and against Bronze; exact Jaccard confirms every candidate.
+  dedup_jaccard: 0.85
+  # A rewrite this close to its own Bronze source contributes nothing beyond Bronze.
+  bronze_verbatim_jaccard: 0.90
+  min_sections: 3
+  min_section_words: 12
+  max_ngram_repeats: 3
+  min_type_token_ratio: 0.35
+
+# --- diversity ---------------------------------------------------------------
+diversity:
+  # Reported at a FIXED five references with the saturation curve published beside it: a
+  # self-BLEU without its reference count is not a number (D-043).
+  self_bleu_warn_above: 0.60
+  seed: ${seed}

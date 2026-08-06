@@ -1,0 +1,18 @@
+# @package encoder
+# GINE: GIN with edge features. The most WL-expressive arm in the comparison, so it is the
+# one most likely to beat the primary if the signal really is structural. If it does, the
+# primary arm changes and DECISIONS.md records the switch.
+name: gin
+arch: gin
+hidden_dim: 256
+layers: 3
+heads: 8            # unused by this arm; kept so one sweep config covers all six
+concat_heads: true  # unused by this arm
+dropout: 0.2
+edge_dim: 16
+residual: true
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+use_edge_features: true

@@ -1,0 +1,658 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/graph2text-aml/schemas/case_facts_v1.json",
+  "title": "case_facts v1",
+  "description": "The structured fact record extracted from one case subgraph. This schema is the contract between the fact extractor (forward), the claim checker (reverse) and the controlled vocabulary (bounding). It is FROZEN at 1.0.0: any change invalidates every generated corpus (invariant 3).\n\nAvailability is the load-bearing design detail. Every fact family that a substrate may not support is a `oneOf` between the populated object and an explicit `{\"available\": false, \"reason\": ...}` sentinel. Absence is never encoded as 0 and never as a bare null that could be read as a measured value. Downstream generation must not assert a fact under a sentinel; downstream checking must return UNVERIFIABLE for it.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "dataset",
+    "extractor_version",
+    "availability",
+    "entity_inventory",
+    "structure",
+    "focal_entity",
+    "temporal",
+    "flow",
+    "labels",
+    "motifs",
+    "typology",
+    "model_signal",
+    "provenance"
+  ],
+
+  "$defs": {
+    "unavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "reason"],
+      "description": "The explicit absence sentinel. `available` is always literally false, so a consumer that forgets to branch on it cannot mistake the object for a value.",
+      "properties": {
+        "available": { "const": false },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Machine-readable reason code, e.g. 'substrate_has_no_monetary_amounts', 'multi_currency_aggregate_undefined'."
+        }
+      }
+    },
+
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "currency"],
+      "description": "A monetary quantity. There is no currency-free amount anywhere in this schema: an amount without its unit is exactly the kind of fact a narrative can restate wrongly without contradicting anything.",
+      "properties": {
+        "value": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "money_or_unavailable": {
+      "oneOf": [
+        { "$ref": "#/$defs/money" },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+
+    "number_or_unavailable": {
+      "oneOf": [
+        { "type": "number" },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+
+    "integer_or_unavailable": {
+      "oneOf": [
+        { "type": "integer" },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+
+    "boolean_or_unavailable": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+
+    "timestamp_or_unavailable": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "$ref": "#/$defs/unavailable" }
+      ]
+    },
+
+    "entity_role": {
+      "type": "string",
+      "description": "Closed vocabulary; mirrors entity_roles in schemas/vocab_v1.yaml. Deliberately excludes business-type labels such as 'mixer' or 'exchange' — no substrate supports an entity-type claim (D-015, D-029).",
+      "enum": [
+        "originator",
+        "intermediary",
+        "beneficiary",
+        "pass_through",
+        "terminal",
+        "hub"
+      ]
+    },
+
+    "phase": {
+      "type": "string",
+      "description": "Closed vocabulary of event-ordering phases. 'interleaved' is a first-class outcome, not a failure to decide: it states that inflows and outflows overlap in time, which forbids any narrative claim of a receive-then-disperse sequence.",
+      "enum": ["inflow_phase", "consolidation", "outflow_phase", "interleaved"]
+    },
+
+    "per_currency_total": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "value", "n_transfers"],
+      "properties": {
+        "currency": { "type": "string", "minLength": 1 },
+        "value": { "type": "number", "minimum": 0 },
+        "n_transfers": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "description": "Frozen. Recorded in every derived artifact (invariant 3)."
+    },
+    "case_id": { "type": "string", "minLength": 1 },
+    "dataset": { "type": "string", "minLength": 1 },
+    "extractor_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the extraction code, independent of the schema version. A bug fix that changes a computed value bumps this without invalidating the schema."
+    },
+
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The substrate's AvailabilityMask, carried verbatim from data/canonical.py so a fact record is self-describing and a consumer never has to look up which substrate it came from.",
+      "required": [
+        "absolute_timestamps",
+        "fine_temporal_resolution",
+        "monetary_amounts",
+        "currencies",
+        "institution_identity",
+        "entity_types",
+        "node_labels",
+        "typology_ground_truth",
+        "semantic_node_features"
+      ],
+      "properties": {
+        "absolute_timestamps": { "type": "boolean" },
+        "fine_temporal_resolution": { "type": "boolean" },
+        "monetary_amounts": { "type": "boolean" },
+        "currencies": { "type": "boolean" },
+        "institution_identity": { "type": "boolean" },
+        "entity_types": { "type": "boolean" },
+        "node_labels": { "type": "boolean" },
+        "typology_ground_truth": { "type": "boolean" },
+        "semantic_node_features": { "type": "boolean" }
+      }
+    },
+
+    "entity_inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Every entity the case contains. Present so that H1 (entity fabrication) is checkable from the fact record alone, without re-materialising the subgraph. Cases are bounded at n_max=150 nodes (D-018), so this is cheap.",
+      "required": ["node_ids", "focal_id"],
+      "properties": {
+        "node_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Sorted. An entity reference outside this list is H1 by construction."
+        },
+        "focal_id": { "type": "string", "minLength": 1 }
+      }
+    },
+
+    "structure": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Pure topology. Available on every substrate by construction — a graph always has a shape.",
+      "required": [
+        "n_nodes",
+        "n_edges",
+        "n_components",
+        "density",
+        "diameter",
+        "max_in_degree",
+        "max_out_degree",
+        "reciprocity",
+        "n_self_loops"
+      ],
+      "properties": {
+        "n_nodes": { "type": "integer", "minimum": 1 },
+        "n_edges": { "type": "integer", "minimum": 0 },
+        "n_components": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Weakly-connected components."
+        },
+        "density": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Directed simple-graph density over distinct ordered pairs, self-loops excluded: |distinct non-loop (src,dst)| / (n*(n-1)). 0.0 when n_nodes < 2."
+        },
+        "diameter": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Longest shortest path over the UNDIRECTED projection, maximised within each weakly-connected component. null only when n_nodes < 2. This is a value, not an availability sentinel."
+        },
+        "max_in_degree": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Largest count of DISTINCT in-neighbours, self excluded. Distinct rather than transaction count, because 'received from 12 accounts' is the claim a narrative makes."
+        },
+        "max_out_degree": { "type": "integer", "minimum": 0 },
+        "reciprocity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Share of distinct non-loop directed pairs whose reverse pair also exists. 0.0 when there are none."
+        },
+        "n_self_loops": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Self-loop transactions. HI-Small is 11.6% self-loops (D-017) and they are kept, so a narrative that counts transactions must be able to account for them."
+        }
+      }
+    },
+
+    "focal_entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The account the case is about. On a constructed case this is the extraction seed; on a provided subgraph it is the highest-degree node, ties broken lexicographically.",
+      "required": [
+        "id",
+        "selection_rule",
+        "in_degree",
+        "out_degree",
+        "n_transactions_in",
+        "n_transactions_out",
+        "role",
+        "first_seen",
+        "last_seen"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "selection_rule": { "enum": ["extraction_seed", "max_degree"] },
+        "in_degree": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Distinct in-neighbours within the case, self excluded."
+        },
+        "out_degree": { "type": "integer", "minimum": 0 },
+        "n_transactions_in": { "type": "integer", "minimum": 0 },
+        "n_transactions_out": { "type": "integer", "minimum": 0 },
+        "role": { "$ref": "#/$defs/entity_role" },
+        "first_seen": { "$ref": "#/$defs/timestamp_or_unavailable" },
+        "last_seen": { "$ref": "#/$defs/timestamp_or_unavailable" }
+      }
+    },
+
+    "temporal": {
+      "description": "Wholly unavailable on a substrate without absolute timestamps. Elliptic2 gets the sentinel rather than a zeroed object, because 'the window is 0 hours long' and 'there is no clock' are different statements and only one of them is true.",
+      "oneOf": [
+        { "$ref": "#/$defs/unavailable" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "window_start",
+            "window_end",
+            "span_hours",
+            "burst_detected",
+            "burst_window_hours",
+            "burst_txn_count",
+            "burst_start",
+            "event_ordering",
+            "n_transactions"
+          ],
+          "properties": {
+            "window_start": { "type": "string", "format": "date-time" },
+            "window_end": { "type": "string", "format": "date-time" },
+            "span_hours": {
+              "type": "number",
+              "minimum": 0,
+              "description": "window_end - window_start in hours. Observed extent of the case's transactions, NOT the extraction window (which is padded, D-019)."
+            },
+            "burst_detected": { "type": "boolean" },
+            "burst_window_hours": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "description": "OBSERVED span of the tightest qualifying burst, not the configured cap. null iff burst_detected is false — that null is a value ('no burst'), not a masked field."
+            },
+            "burst_txn_count": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Transactions inside the tightest qualifying burst. null iff burst_detected is false."
+            },
+            "burst_start": {
+              "type": ["string", "null"],
+              "format": "date-time",
+              "description": "First transaction of the tightest qualifying burst. null iff burst_detected is false."
+            },
+            "event_ordering": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/phase" },
+              "description": "Phase sequence around the focal entity, from the documented heuristic in facts/temporal.py. Empty only when the focal entity has no non-loop transactions."
+            },
+            "n_transactions": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+
+    "flow": {
+      "description": "Wholly unavailable without monetary amounts. Within an available flow block, individual aggregates carry their own sentinels: summing across currencies without a conversion rate is undefined, and this schema refuses to encode it as a number.",
+      "oneOf": [
+        { "$ref": "#/$defs/unavailable" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "total_inflow",
+            "total_outflow",
+            "retained",
+            "max_single_transfer",
+            "inflow_by_currency",
+            "outflow_by_currency",
+            "n_transfers_near_threshold",
+            "threshold_reference",
+            "threshold_currency",
+            "threshold_band_fraction",
+            "currencies_involved",
+            "cross_border",
+            "cross_institution",
+            "n_distinct_banks",
+            "payment_formats"
+          ],
+          "properties": {
+            "total_inflow": {
+              "$ref": "#/$defs/money_or_unavailable",
+              "description": "Value received by the focal entity from other accounts inside the case, in the receiving currency. Unavailable when inflows span more than one currency."
+            },
+            "total_outflow": { "$ref": "#/$defs/money_or_unavailable" },
+            "retained": {
+              "$ref": "#/$defs/money_or_unavailable",
+              "description": "total_inflow - total_outflow. Unavailable unless both are available in the SAME currency. May be negative in principle; clamped to >= 0 is NOT done, so the money $defs minimum of 0 does not apply here — see facts/flow.py, which emits the sentinel rather than a negative when outflow exceeds inflow across a padded window."
+            },
+            "max_single_transfer": { "$ref": "#/$defs/money_or_unavailable" },
+            "inflow_by_currency": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/per_currency_total" },
+              "description": "Always populated, sorted by currency. This is what makes the multi-currency sentinel above safe: the information is never lost, only the undefined aggregate is withheld."
+            },
+            "outflow_by_currency": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/per_currency_total" }
+            },
+            "n_transfers_near_threshold": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Transactions in threshold_currency whose amount lies in [threshold*(1-band), threshold). Strictly below: a transfer AT the threshold is reportable, not structured around."
+            },
+            "threshold_reference": { "type": "number", "exclusiveMinimum": 0 },
+            "threshold_currency": { "type": "string", "minLength": 1 },
+            "threshold_band_fraction": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "currencies_involved": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "cross_border": {
+              "$ref": "#/$defs/unavailable",
+              "description": "PERMANENTLY unavailable, on every substrate. Neither AMLworld nor Elliptic2 carries jurisdiction. The field exists precisely so the claim is explicitly forbidden rather than silently absent: a narrative asserting cross-border movement gets UNVERIFIABLE against a sentinel instead of matching nothing. See D-030."
+            },
+            "cross_institution": {
+              "$ref": "#/$defs/boolean_or_unavailable",
+              "description": "More than one distinct bank among the case's accounts. This is what IS derivable, and it is not the same claim as cross-border."
+            },
+            "n_distinct_banks": { "$ref": "#/$defs/integer_or_unavailable" },
+            "payment_formats": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
+    },
+
+    "labels": {
+      "description": "Counterparty ground truth around the focal entity. Unavailable when the substrate carries no per-transaction illicit label — Elliptic2 labels whole subgraphs, which licenses no statement about an individual counterparty.",
+      "oneOf": [
+        { "$ref": "#/$defs/unavailable" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "n_illicit_counterparties",
+            "n_licit_counterparties",
+            "n_unknown_counterparties",
+            "n_counterparties",
+            "min_hops_to_known_illicit",
+            "illicit_inflow_share",
+            "n_illicit_transactions",
+            "focal_is_illicit"
+          ],
+          "properties": {
+            "n_illicit_counterparties": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Counterparties of the focal entity incident to at least one laundering-flagged transaction inside the case."
+            },
+            "n_licit_counterparties": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Counterparties with a label on every incident transaction and no laundering flag."
+            },
+            "n_unknown_counterparties": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Counterparties with at least one unlabelled incident transaction and no laundering flag. Zero on AMLworld, whose ground truth is complete; non-trivially populated on any partially-labelled substrate."
+            },
+            "n_counterparties": { "type": "integer", "minimum": 0 },
+            "min_hops_to_known_illicit": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Undirected hop distance from the focal entity to the nearest node incident to a laundering-flagged transaction. 0 when the focal entity itself is one. null means NO such node is reachable inside the case — a value, not a masked field."
+            },
+            "illicit_inflow_share": {
+              "$ref": "#/$defs/number_or_unavailable",
+              "description": "Share of inflow VALUE to the focal entity arriving on laundering-flagged transactions, in [0,1]. Unavailable when amounts are absent or inflows span multiple currencies."
+            },
+            "n_illicit_transactions": { "type": "integer", "minimum": 0 },
+            "focal_is_illicit": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+
+    "motifs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Structural detectors. Each reports presence plus quantitative descriptors, and each descriptor is null exactly when the motif is absent. These are DETECTORS with thresholds, distinct from the continuous soft scorer in data/motifs.py used for hard-negative mining (D-031).",
+      "required": [
+        "fan_in",
+        "fan_out",
+        "chain",
+        "cycle",
+        "bipartite",
+        "stack",
+        "gather_scatter",
+        "scatter_gather"
+      ],
+      "properties": {
+        "fan_in": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "width", "hub", "window_hours"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "width": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Distinct senders into the widest qualifying hub."
+            },
+            "hub": { "type": ["string", "null"] },
+            "window_hours": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "description": "Time span of the transactions forming the fan. null when absent, or when the substrate has no clock."
+            }
+          }
+        },
+        "fan_out": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "width", "hub", "window_hours"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "width": { "type": ["integer", "null"], "minimum": 0 },
+            "hub": { "type": ["string", "null"] },
+            "window_hours": { "type": ["number", "null"], "minimum": 0 }
+          }
+        },
+        "chain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "max_length"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "max_length": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Longest simple directed path, in EDGES. Always reported, including below the presence threshold, so a narrative claiming a longer chain is CONTRADICTED rather than UNVERIFIABLE."
+            }
+          }
+        },
+        "cycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "length"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "length": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Length in edges of the SHORTEST directed cycle at or above the configured minimum. null when absent."
+            }
+          }
+        },
+        "bipartite": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "score", "left_size", "right_size"],
+          "properties": {
+            "present": {
+              "type": "boolean",
+              "description": "True only when the case is EXACTLY bipartite (no odd cycle) and both sides hold at least the configured minimum."
+            },
+            "score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "purity * balance under a greedy two-colouring. Always reported."
+            },
+            "left_size": { "type": ["integer", "null"], "minimum": 0 },
+            "right_size": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "depth", "layer_widths"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "depth": { "type": ["integer", "null"], "minimum": 0 },
+            "layer_widths": {
+              "type": ["array", "null"],
+              "items": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "gather_scatter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "gather_width", "scatter_width", "hub"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "gather_width": { "type": ["integer", "null"], "minimum": 0 },
+            "scatter_width": { "type": ["integer", "null"], "minimum": 0 },
+            "hub": { "type": ["string", "null"] }
+          }
+        },
+        "scatter_gather": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["present", "width", "origin", "destination"],
+          "properties": {
+            "present": { "type": "boolean" },
+            "width": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Distinct intermediaries on two-hop paths from one origin to one destination."
+            },
+            "origin": { "type": ["string", "null"] },
+            "destination": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+
+    "typology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "source", "confidence", "scope"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "A member of TYPOLOGY_VOCABULARY in data/canonical.py, or 'unclassified'.",
+          "enum": [
+            "fan_out",
+            "fan_in",
+            "gather_scatter",
+            "scatter_gather",
+            "cycle",
+            "random",
+            "bipartite",
+            "stack",
+            "unclassified"
+          ]
+        },
+        "source": {
+          "enum": ["ground_truth", "inferred", "none"],
+          "description": "'inferred' means the label came from motif detection alone and carries no ground truth. A narrative must be able to hedge accordingly, and the checker treats an inferred typology claim as at most UNVERIFIABLE-supported (see facts/checkers.py)."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "scope": {
+          "enum": ["stream_membership", "case_structure"],
+          "description": "'stream_membership' means the case is PART OF a stream of this typology and may not exhibit it in full — the 48-hour window cap keeps 65% of a stream's transactions on average (D-019). Any narrative claim about a scheme's COMPLETENESS is unsupported under this scope."
+        }
+      }
+    },
+
+    "model_signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Written back in Phase 7 once the GAT exists. Null-valued at extraction time and never inferred from the graph — this block is the model's output, not a fact about the subgraph.",
+      "required": ["gnn_risk_score", "score_percentile", "top_contributing_nodes", "model_version"],
+      "properties": {
+        "gnn_risk_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "score_percentile": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "top_contributing_nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node_id", "attribution"],
+            "properties": {
+              "node_id": { "type": "string", "minLength": 1 },
+              "attribution": { "type": "number" }
+            }
+          }
+        },
+        "model_version": { "type": ["string", "null"] }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_extraction", "field_producers", "computed_at", "config"],
+      "properties": {
+        "case_extraction": {
+          "type": "object",
+          "description": "The upstream extraction provenance, verbatim from Phase 2.",
+          "additionalProperties": true
+        },
+        "field_producers": {
+          "type": "object",
+          "description": "Field path to the named graph computation that produced it, e.g. 'temporal.burst_window_hours' -> 'temporal.sliding_window_burst'. The checker uses this to attribute a disagreement to a specific computation rather than to the record as a whole.",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "computed_at": { "type": "string", "format": "date-time" },
+        "config": {
+          "type": "object",
+          "description": "The resolved FactConfig. Every threshold that decided a `present` flag is here, so a detector's verdict is always reproducible from the record.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

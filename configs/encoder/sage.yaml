@@ -1,0 +1,18 @@
+# @package encoder
+# GraphSAGE: the standard scalable comparator. SAGEConv has no edge-attribute channel, so
+# this arm genuinely cannot see amounts or payment rails, and that is reported rather than
+# papered over with a fake edge path.
+name: sage
+arch: sage
+hidden_dim: 256
+layers: 3
+heads: 8            # unused by this arm
+concat_heads: true  # unused by this arm
+dropout: 0.2
+edge_dim: 16
+residual: true
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+use_edge_features: true

@@ -1,0 +1,11 @@
+# @package experiment
+name: encoder_debug
+description: "Fast wiring check: two arms, one seed, few epochs, CPU-friendly."
+limit_cases: 400
+device: cpu
+arms: [gatv2, mlp]
+ablations:
+  positional_encodings: false
+  edge_features: false
+  loss_function: false
+notes: "Not a result. Used by `make encoder-debug` to catch wiring bugs."

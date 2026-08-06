@@ -1,0 +1,18 @@
+# @package encoder
+# Graph transformer with a virtual node. Every node is one hop from every other, which
+# matters because a three-layer local model cannot connect the two ends of a six-hop
+# transfer chain and `stack` is exactly that shape.
+name: graph_transformer
+arch: graph_transformer
+hidden_dim: 256
+layers: 3
+heads: 8
+concat_heads: true
+dropout: 0.2
+edge_dim: 16
+residual: true
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+use_edge_features: true

@@ -1,0 +1,13 @@
+# @package experiment
+name: encoder_sweep
+description: "Phase 7: all six encoder arms, three seeds each, on the frozen splits."
+limit_cases: null
+device: cuda
+# Every arm in ARMS. The MLP control is not optional and the gate reads it.
+arms: [gatv2, gin, sage, gcn, graph_transformer, mlp]
+# Ablations run on the primary arm only, since they answer questions about it.
+ablations:
+  positional_encodings: true
+  edge_features: true
+  loss_function: true
+notes: ""

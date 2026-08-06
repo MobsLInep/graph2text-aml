@@ -1,0 +1,111 @@
+name: verify-release
+
+# The release verification, not the development gate. `ci.yml` answers "does this change
+# break anything"; this answers "can a stranger still clone this and use it".
+#
+# It runs on a schedule because the answer decays without anyone touching the repository:
+# a base image is rebuilt, a wheel is yanked, an index moves. A release that was verified
+# in August and is broken in October is broken, and the paper names the URL.
+
+on:
+  schedule:
+    # 04:00 UTC every Monday.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "docker/**"
+      - "scripts/14_*.py"
+      - "tests/fixtures/**"
+      - "tests/golden/quickstart_evaluation.json"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/verify-release.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  clean-clone:
+    name: clean clone + install + quickstart
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # Full history: the secret scan is over the object database, not the working tree.
+      # A credential committed and later removed is still in every clone.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Verify the release
+        run: |
+          uv sync --frozen --group dev
+          uv run python scripts/14_verify_release.py \
+            --json artifacts/metrics/release_verification.json
+
+      - name: Upload the verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-verification
+          path: artifacts/metrics/release_verification.json
+          if-no-files-found: warn
+
+  docker-cpu:
+    name: CPU image builds and runs the quickstart
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image runs `scripts/14_quickstart.py` at build time, so a successful build has
+      # already reproduced one published result against the committed golden file.
+      - name: Build the CPU image
+        run: docker build -f docker/Dockerfile.cpu -t g2t-aml:cpu .
+
+      - name: Run the quickstart in the container
+        run: docker run --rm g2t-aml:cpu
+
+      - name: Run the full gate in the container
+        run: docker run --rm g2t-aml:cpu make smoke
+
+  docker-gpu:
+    name: GPU image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The runner has no GPU, so this proves the image builds and its CUDA torch imports.
+    # Whether a card is visible is a runtime question and is deliberately not asserted.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Build the GPU image
+        run: docker build -f docker/Dockerfile.gpu -t g2t-aml:gpu .

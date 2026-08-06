@@ -7,7 +7,10 @@ defaults:
   - _self_
   - paths: default
   - data: amlworld
-  - encoder: gat
+  - cases: default
+  - facts: default
+  - encoder: gatv2
+  - training: encoder
   - fusion: prefix
   - generator: llama31_8b_qlora
   - corpus: bronze
@@ -22,8 +25,25 @@ deterministic: true
 
 # Schema version of the case_facts record this run reads or writes. Invariant 3:
 # pinned here, echoed into every derived artifact.
+#
+# FROZEN at 1.0.0 in Phase 3. Changing it invalidates every generated corpus and every
+# fact record already on disk. tests/unit/test_facts_coverage.py asserts this value
+# agrees with the JSON Schema, the vocabulary and g2t_aml.CASE_FACTS_SCHEMA_VERSION.
 schema_version:
-  case_facts: "0.1.0"
+  case_facts: "1.0.0"
+
+# Phase 1 ingest knobs (scripts/01_ingest.py).
+ingest:
+  # null means the complete dataset. Any integer subsets the transactions table, which is
+  # recorded in the manifest as `subsetted_n_rows` and disables the published-statistic
+  # checks -- a subset cannot reproduce them and must never be mistaken for one that can.
+  n_rows: null
+  # Hashing HI-Small costs a couple of seconds. Never disable this for a real ingest.
+  verify_checksums: true
+  # O(V + E) union-find. Cheap on HI-Small, refused on the Elliptic2 background graph.
+  compute_components: true
+  # O(E) set membership check that every edge endpoint exists as a node.
+  validate_referential_integrity: true
 
 hydra:
   run:

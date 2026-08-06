@@ -1,0 +1,91 @@
+# @package facts
+# Phase 3: the fact layer's thresholds.
+#
+# Every value here decides a `present` flag or a reported quantity, and every one is
+# written verbatim into `provenance.config` on each fact record — so a detector's verdict
+# is always reproducible from the record alone, without reading the code that produced it.
+# The defaults mirror g2t_aml.facts.config.FactConfig; a test asserts they agree.
+name: default
+
+# Cases to process. 0 means all of them. Present for smoke runs, never for a real build.
+limit: 0
+
+# --- burst detection (src/g2t_aml/facts/temporal.py) ---
+# A burst is >= min_transactions inside a window of <= window_hours, and the burst
+# REPORTED is the tightest such window: maximise the count, then minimise the span. This
+# is not "many transactions" -- forty transactions spread evenly over two days is not a
+# burst, and six inside twenty minutes is. See D-026.
+burst:
+  # 5 sits well inside a real AMLworld pattern (its fans run to 16 counterparties and its
+  # streams to 32 transactions) while excluding the median case, which holds 11
+  # transactions across its whole 48-hour window.
+  min_transactions: 5
+  # 24 aligns the detector with the vocabulary's temporal bindings, so the qualitative
+  # phrase and the structural detector cannot disagree about what "short" means. Note the
+  # `rapid_dispersal` binding must be STRICTLY tighter than this (it is 6h): a binding at
+  # the cap would be satisfied by every burst the detector can report, and a descriptor
+  # that always holds is not a claim. tests/unit/test_facts_coverage.py enforces it.
+  window_hours: 24.0
+
+# Quiet interval between the last inflow and the first outflow that turns "received then
+# sent" into a `consolidation` phase. AMLworld timestamps have minute resolution, so
+# anything shorter than an hour is indistinguishable from same-batch processing.
+consolidation_min_gap_hours: 1.0
+
+# --- motif detectors (src/g2t_aml/facts/motifs.py) ---
+# These are DETECTORS with thresholds, deliberately distinct from the continuous soft
+# scorer in data/motifs.py used for hard-negative mining. See D-031.
+motifs:
+  # Two counterparties is a payment, not a pattern. Matches FAN_FLOOR in data/motifs.py.
+  fan_min_width: 3
+  two_sided_min_width: 2
+  # A two-edge path is a single forward, which every pass-through account produces.
+  chain_min_length: 3
+  # A two-node back-and-forth is a refund, and HI-Small is full of them.
+  cycle_min_length: 3
+  cycle_max_length: 8
+  # Above this edge count the cycle search is skipped and reported absent. Recorded, so
+  # the skip is never invisible.
+  cycle_edge_budget: 2000
+  # Longest simple path is NP-hard. Above this node count the search falls back to a
+  # greedy lower bound, which can under-report but never over-report -- the safe
+  # direction, since it turns a claim into CONTRADICTED rather than wrongly SUPPORTED.
+  path_node_budget: 40
+  stack_min_depth: 3
+  stack_min_layer_width: 2
+  bipartite_min_side: 2
+
+# Distinct counterparties on BOTH sides before an account is a `hub` rather than an
+# `intermediary`. Matches the min_in_out_degree binding in schemas/vocab_v1.yaml.
+hub_min_degree: 5
+
+# --- near-threshold detection (src/g2t_aml/facts/flow.py) ---
+# The band is [reference * (1 - band_fraction), reference) -- strictly below, because a
+# transfer AT the threshold is reportable and so is not evidence of structuring around it.
+# Only transfers denominated in `currency` are counted: converting a 9,500 Rupee transfer
+# would need a rate the substrate does not carry.
+threshold:
+  reference: 10000.00
+  currency: "US Dollar"
+  band_fraction: 0.10
+
+# --- tolerance policy (src/g2t_aml/facts/checkers.py) ---
+# Published in the paper. A reviewer must be able to check that the reported faithfulness
+# number was measured under exactly this table. See D-027.
+tolerance:
+  # 1% relative. Chosen over exact because "approximately USD 482,000" against 482,300 is
+  # good writing, and forcing exactness would mark it unfaithful.
+  monetary_relative: 0.01
+  # Without a floor, 1% of a 0.01 BTC transfer is 0.0001, which no written rounding hits.
+  monetary_absolute_floor: 0.01
+  # Counts are exact and this is NOT a knob -- FactConfig refuses to construct otherwise.
+  counts_exact: true
+  # Durations are correct within one unit of the granularity the NARRATIVE states. "About
+  # 3 days" against 76 hours is supported; "76 hours" against 80 hours is not.
+  duration_granularity_units: 1.0
+  share_absolute: 0.01
+  score_absolute: 0.01
+
+# Guard on entity_inventory.node_ids. Cases are capped at 150 nodes (D-018); a case above
+# this raises rather than truncating the list the H1 checker depends on being complete.
+max_inventory_nodes: 1000

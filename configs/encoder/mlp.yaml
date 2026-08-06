@@ -1,0 +1,26 @@
+# @package encoder
+# THE CONTROL. No message passing: a per-node feed-forward stack, then the same attention
+# pooling, the same heads, the same feature engineering, the same tuning budget and the
+# same seeds as every other arm. It is a DeepSets model over case-local node features and
+# it is built to be hard to beat.
+#
+# If this matches GATv2 on AUC-PR with overlapping bootstrap CIs, topology carries no
+# signal beyond node-local summary statistics on this data, and the premise of the project
+# needs revisiting. That is a project-level finding and the Phase 7 gate halts on it.
+name: mlp
+arch: mlp
+hidden_dim: 256
+layers: 3
+heads: 8            # unused by this arm
+concat_heads: true  # unused by this arm
+dropout: 0.2
+edge_dim: 16
+residual: true      # unused by this arm; its blocks are residual by construction
+norm: layernorm
+readout: attention_pool
+n_pooled_tokens: 16
+typology_head: true
+# Structurally impossible for this arm: consuming an edge feature without message passing
+# is a one-hop aggregation. Set False so the resolved config states the fact rather than
+# implying an edge path that does not exist.
+use_edge_features: false
