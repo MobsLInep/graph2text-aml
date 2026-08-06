@@ -5,8 +5,9 @@ Two images. **Use the CPU one unless you are training something.**
 | | `Dockerfile.cpu` | `Dockerfile.gpu` |
 |---|---|---|
 | Base | `python:3.11.14-slim-bookworm` (digest-pinned) | `nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04` (digest-pinned) |
-| Size | ~1 GB | ~8 GB |
+| Size | **2.9 GB** on disk / 656 MB compressed | **39.6 GB** on disk / 13.2 GB compressed |
 | Covers | Phases 1–6, 10 — ingestion, splits, fact layer, corpus, evaluation | Everything, plus phases 7–9, 11–13 |
+| Build time (cold) | ~5 min | **~25 min**, and it pulls roughly 5 GB of CUDA wheels |
 | torch | **none** | 2.4.0+cu121 |
 | Needs a GPU to build | no | **no** |
 | Needs a GPU to run | no | for the training targets |

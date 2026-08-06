@@ -1775,8 +1775,20 @@ clean runner, for reasons that could only appear there.
    had just added to the documented-commands list — had no scipy. `check_install` now
    matches what CI and the CPU image do.
 
+4. **`uv sync` prunes the PyG companion wheels.** With the digest fixed, the GPU build got
+   as far as its import check and died on
+   `ModuleNotFoundError: No module named 'torch_scatter'`. The three companion wheels were
+   installed *before* the final `uv sync`, and **`uv sync` removes whatever the lockfile
+   does not name** — and those three are deliberately absent from `uv.lock` (D-007: their
+   sdists import torch at build time and cannot be resolved at all). So the layer that
+   installed them was silently undone by the next layer. They now install **after** the
+   last sync, which costs layer-cache reuse on source edits and is worth it.
+
 **The CPU image job passed on the first run**, including its build-time quickstart, so the
-image and the packaging were right; the failures were in the GPU pin and in this script.
+image and the packaging were right; the failures were in the GPU image and in this script.
+**On the second run the clean-clone and CPU jobs both passed**, leaving only the GPU build
+— which had never been built anywhere before this phase, because the GPU path used to be
+four commented-out lines inside the CPU Dockerfile.
 
 ### Acceptance criteria — the Phase 9 gate
 
@@ -2810,6 +2822,12 @@ concentrating exactly where it matters most) is reported as the case-type dispar
 | Build context | **6.6 MB** (was ~8 GB before `.dockerignore`) |
 | `docker run --rm g2t-aml:cpu` | **`QUICKSTART OK`** — exact golden match inside the container |
 | `docker run --rm g2t-aml:cpu make smoke` | **`smoke OK`** — lint, typecheck, the full suite and the end-to-end run, all inside the CPU-only image |
+| `docker build -f docker/Dockerfile.gpu` | **succeeds**, and its build-time check imports the full PyG stack and prints `QUICKSTART OK` |
+| GPU image size | **39.6 GB** on disk / 13.2 GB compressed, ~25 min cold |
+| `docker run --rm g2t-aml:gpu python -c "import torch, torch_geometric, torch_scatter, torch_sparse, torch_cluster"` | torch **2.4.0+cu121**, PyG **2.6.1**, all three companion wheels import |
+
+Whether a card is visible is deliberately not asserted at build time — CI builders have no
+GPU, and a build that required one could never be built in CI.
 
 **This is the clean-clone-on-a-fresh-machine criterion, discharged twice**: once from a
 pristine `git archive` export with a from-lockfile install, and once inside a container

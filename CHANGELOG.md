@@ -107,6 +107,10 @@ any number here as evidence about the method.
 - **`scripts/14_verify_release.py` now scrubs `VIRTUAL_ENV` and friends** from commands run
   inside the clean clone, and installs `--extra stats` there. A clean-clone verification
   that resolves against the caller's environment is verifying the wrong thing.
+- **The PyG companion wheels now install after the final `uv sync` in the GPU image.**
+  `uv sync` prunes anything the lockfile does not name, and those three are deliberately
+  not in `uv.lock` (D-007) — so the layer installing them was silently undone by the next
+  one, and the build failed its own import check.
 - Module docstrings added to `corpus/`, `models/` and `utils/` `__init__.py`.
 
 ### Licensing decisions — Phase 14 (D-098)

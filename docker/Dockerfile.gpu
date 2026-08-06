@@ -65,14 +65,20 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --group dev --extra eval --extra graph --extra llm --extra human \
         --no-install-project
 
+COPY . .
+RUN uv sync --frozen --group dev --extra eval --extra graph --extra llm --extra human
+
 # The PyG companion wheels, prebuilt against torch 2.4.0 + cu121 exactly.
+#
+# THIS MUST COME AFTER THE LAST `uv sync`. Those three packages are deliberately absent
+# from uv.lock (D-007: their sdists import torch at build time and cannot be resolved),
+# and `uv sync` prunes whatever the lockfile does not name -- so installing them earlier
+# gets them silently removed by the next sync. The build then reaches the import check
+# with `ModuleNotFoundError: No module named 'torch_scatter'`, which is how CI found this.
 RUN uv pip install --find-links https://data.pyg.org/whl/torch-2.4.0+cu121.html \
         torch-scatter==2.1.2 \
         torch-sparse==0.6.18 \
         torch-cluster==1.6.3
-
-COPY . .
-RUN uv sync --frozen --group dev --extra eval --extra graph --extra llm --extra human
 
 RUN mkdir -p data/raw data/interim data/processed \
              artifacts/checkpoints artifacts/metrics artifacts/figures artifacts/runs
