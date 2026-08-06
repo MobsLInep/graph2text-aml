@@ -1737,6 +1737,22 @@ a real fact-record fixture; checkpoint save/load round-trips fusion and encoder 
    now the share of the typology's *required* salient fields the extracted claims mention,
    with unsupported fields excused by the report itself (invariant 4).
 
+### Release URLs
+
+| | |
+|---|---|
+| Repository | **<https://github.com/MobsLInep/graph2text-aml>** — public |
+| Tagged release | **<https://github.com/MobsLInep/graph2text-aml/releases/tag/v0.1.0>** |
+| Commit | `4899739` (3 commits total; history rewritten to carry sole authorship) |
+| Zenodo DOI | **NOT MINTED** — see below |
+| HuggingFace Hub | **NOTHING UPLOADED** — see below |
+
+**Verified against the published repository, not against the working tree:** a fresh
+`git clone` of the public URL into an empty directory gives **406 files / 7.4 MB**, and
+`uv sync --frozen --group dev --extra stats && uv run python scripts/14_quickstart.py`
+prints `QUICKSTART OK` with an exact golden match. Both workflows (`ci`, `verify-release`)
+are registered and active.
+
 ### Acceptance criteria — the Phase 9 gate
 
 | Criterion | Status |
@@ -2835,7 +2851,7 @@ optimiser bug only because the relock forced a full resync.
 
 | Criterion | Status |
 |---|---|
-| Repository public with a tagged release | **met** |
+| Repository public with a tagged release | **met** — <https://github.com/MobsLInep/graph2text-aml>, `v0.1.0` |
 | **Zenodo DOI minted** | **NOT MET.** Requires linking a Zenodo account to the GitHub repository and re-cutting the release; it is an account action, not a code action. |
 | Clean-clone quickstart verified on a fresh machine | **met** — verified in a fresh container from a `git archive` export |
 | Reproduction guide complete and tested | **met** |
@@ -2843,7 +2859,7 @@ optimiser bug only because the relock forced a full resync.
 | Model and dataset cards written | **met** |
 | Ethics statement complete | **met** |
 | `RESULTS.md` includes every number including nulls | **met** — and two dashes were replaced with the numbers they were hiding |
-| Verification script green in CI | **met** locally and wired; **the first scheduled CI run has not happened yet** |
+| Verification script green in CI | **met** locally (9/9) and wired; both workflows are registered and active. **The first scheduled run fires on the next Monday 04:00 UTC**, so no CI run has completed yet. |
 | Docker image builds and runs | **met** |
 | Secret scan over full git history clean | **met** |
 | **LoRA adapters / fusion projector / GAT checkpoints to HuggingFace** | **partially NOT MET.** The GAT checkpoints exist and are packaged; **the adapters and the projector do not exist**, and nothing was uploaded to the Hub. |
