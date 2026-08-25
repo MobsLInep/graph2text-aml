@@ -63,6 +63,10 @@ any number here as evidence about the method.
   documented false positive.
 - **`.dockerignore`** — the build context was ~8 GB without it, because `.gitignore` does
   not apply to `docker build`.
+- **`docs/RELATED_WORK.md`** — systematic prior-art and patent search. Records the closest
+  paper (SCAFDS, arXiv:2605.18913), three relevant patents (two held by Actimize), the
+  published maxima on both substrates, and an honest account of where the novelty is and is
+  not (D-103).
 - **A `stats` optional extra** (scipy, statsmodels, krippendorff — no torch), installed by
   CI and the CPU image. `eval/statistics.py`, `eval/report.py` and
   `experiments/aggregate.py` are measurement code under invariant 1 and need scipy; the
@@ -111,6 +115,10 @@ any number here as evidence about the method.
   `uv sync` prunes anything the lockfile does not name, and those three are deliberately
   not in `uv.lock` (D-007) — so the layer installing them was silently undone by the next
   one, and the build failed its own import check.
+- **The contribution claim in `CLAUDE.md` corrected.** It had said the fusion layer was the
+  technical novelty; GNN → projector → soft tokens is established prior art (GraphToken,
+  LLaGA, GraphGPT, G-Retriever, Graph2Token). The contribution is the corpus and the
+  measurement instrument; the fusion layer is the system under test (D-103).
 - Module docstrings added to `corpus/`, `models/` and `utils/` `__init__.py`.
 
 ### Licensing decisions — Phase 14 (D-098)

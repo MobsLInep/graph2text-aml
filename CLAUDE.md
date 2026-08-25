@@ -19,8 +19,22 @@ within 22 hours — a pattern consistent with layering."*
 **Target venue:** *Expert Systems with Applications* (Elsevier).
 
 **Architecture:** GAT graph encoder → fusion/projection layer → QLoRA-finetuned
-Llama-3.1-8B → structured narrative. **The fusion layer is the technical novelty:** how
-graph structure gets injected into the language model's embedding space.
+Llama-3.1-8B → structured narrative.
+
+**The contribution is the corpus and the measurement instrument; the fusion layer is the
+system under test.** The earlier framing — "the fusion layer is the technical novelty" —
+**does not survive a literature search and has been corrected** (`docs/RELATED_WORK.md`).
+GNN → projector → soft tokens in an LM's embedding space is an established recipe with at
+least five published instances predating this work (GraphToken, LLaGA, GraphGPT,
+G-Retriever, Graph2Token). Applying it to SAR narratives is new; inventing it is not, and
+claiming otherwise invites a reviewer to produce GraphToken and reject on novelty.
+
+What survives: no public paired *(graph, SAR narrative)* corpus exists; the fact layer runs
+in both directions and is calibrated against an independent oracle; Zero-Hallucination Rate
+is a per-narrative binary rather than an averaged traceability rate; and **H9, exculpatory
+omission, is measured by nobody else.** Gate 8 is then the experiment that tests the fusion
+layer — a question no prior work in that document poses, because none of them has a graph
+token to ablate.
 
 ---
 

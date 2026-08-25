@@ -358,6 +358,7 @@ for one, and §3.1 is why.**
 | Document | What it holds |
 |---|---|
 | `RESULTS.md` | Every number, including the nulls and the 25 named non-runs |
+| `docs/RELATED_WORK.md` | Prior art and patents, with the comparable numbers from each |
 | `docs/data_cards/` | Provenance, licence and limitations per substrate |
 | `docs/dataset_cards/` | Construction, splits and limitations per corpus tier |
 | `docs/model_cards/` | Per-model intended use, evaluation, limitations, misuse |

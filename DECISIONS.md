@@ -3015,3 +3015,61 @@ extra.
 firing at its own side effect trains its reader to ignore it, which is worse than not having
 it. Tool-generated directories are now excluded from the walk by an explicit list, so what
 the check reports on is what git would actually deliver.
+
+---
+
+## D-103
+
+**The fusion layer is not the contribution. The corpus and the measurement instrument are.**
+
+*Phase 14 addendum, 2026-08-25, after a systematic prior-art search.*
+
+`CLAUDE.md` §1 had said, since Phase 0: *"The fusion layer is the technical novelty: how
+graph structure gets injected into the language model's embedding space."* **A literature
+search does not support that, and the brief has been corrected rather than defended.**
+
+GNN → learned projector → soft tokens prepended to an LLM is an established recipe with at
+least five published instances predating this work: **GraphToken** (arXiv:2402.05862,
+Google), **LLaGA** (arXiv:2402.08170), **GraphGPT**, **G-Retriever** (NeurIPS 2024) and
+**Graph2Token**. `PrefixFusion` with three projector variants is a competent instance of
+that family. Presenting it as an invention invites a reviewer to produce GraphToken and
+reject on novelty — which is a worse outcome than never having claimed it.
+
+**And one paper independently reproduces four of our design decisions.** SCAFDS
+(arXiv:2605.18913, 2026) pairs edge-feature graph attention with attribution-grounded SAR
+generation, finds edge features worth **+0.266 AUPRC** (we find +0.114), runs a randomised-
+edge control that lands indistinguishable from its no-edge ablation (our A1 derangement, in
+spirit), and reports **60.0% per-assertion traceability**. It also has a USPTO provisional
+filed 2026-05-08. **We are not the first to ground a SAR narrative in a detector's own
+output, and the paper must not imply we are.**
+
+**What survives the search, and it is all about measurement and data:**
+
+1. **No public paired *(graph, SAR narrative)* corpus exists.** Checked against AMLworld,
+   Elliptic2, TransXion, AMLGentex and the Vanguard in-context-learning work — all are
+   detection datasets with no narratives. The premise of the three-tier corpus holds.
+2. **The fact layer runs in both directions and is calibrated against an independent
+   oracle** (D-034). No related work validates its own faithfulness checker against
+   anything external.
+3. **Zero-Hallucination Rate is a per-narrative binary**, not an averaged assertion rate.
+   One fabricated fact makes a SAR unfileable regardless of the rest (D-077). SCAFDS's
+   60.0% is an average over claims; the two are different quantities.
+4. **H9 — omission of an exculpatory fact — is measured by nobody else.** SCAFDS measures
+   whether what *is* said is traceable. We measure what is wrongly *left out*, at 0.9179 on
+   our own corpus. It is the failure mode least likely to survive human review.
+
+**Consequence for Gate 8.** Reframing does not demote it — it clarifies it. SCAFDS cannot
+ask whether a language model reads a graph token, because it has no graph token; its
+conditioning is threshold suppression at the prompt. The A1 derangement control (D-071)
+poses a question no work in `docs/RELATED_WORK.md` poses. **The fusion layer stops being
+the claim and becomes the system under test, which is the honest description of an
+experiment that has not run.**
+
+**A metric trap found along the way, recorded so nobody repeats it.** Secondary summaries
+report GLASS at *"~93% on Elliptic2"*. That is **micro-averaged F1 under extreme imbalance**
+— and in the same table Sub2Vec posts a *higher* micro-F1 (0.944) with PR-AUC 0.022 and
+ROC-AUC 0.496, i.e. indistinguishable from random. The meaningful figure is **PR-AUC 0.208**.
+Every number in `docs/RELATED_WORK.md` §1–§2 was therefore taken from the primary PDF, not
+from an abstract or a summary. Had we quoted the secondary source, we would have compared
+our 0.8720 against a number that does not mean what it appears to mean — in the direction
+that flatters us.

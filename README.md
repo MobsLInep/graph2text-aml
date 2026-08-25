@@ -240,6 +240,7 @@ delivered and deferred.
 | [`RESULTS.md`](RESULTS.md) | **Every number, including the nulls and the 25 named non-runs** |
 | [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md) | Raw data to every published number; the tolerance policy |
 | [`docs/ETHICS.md`](docs/ETHICS.md) | Intended use, misuse limits, measured failure rates, fairness, emissions |
+| [`docs/RELATED_WORK.md`](docs/RELATED_WORK.md) | Prior art, patents, and an honest account of where the novelty is — and is not |
 | [`docs/model_cards/`](docs/model_cards/) | Per-model cards, each with an explicit misuse section — and what is *not* released |
 | [`docs/dataset_cards/`](docs/dataset_cards/) | Bronze, Silver, Gold, `case_facts`. Two tiers are empty and say so first. |
 | [`docs/data_cards/`](docs/data_cards/) | Provenance and licence per upstream substrate |
