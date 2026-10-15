@@ -42,6 +42,14 @@ eval_every: 100
 save_every: 500
 n_probe_cases: 10
 
+# Continuing an interrupted run (D-110). A resume file `<run_dir>/<arm>_resume.pt` is
+# rewritten with every step checkpoint, and every resume_every steps if that is set. Point
+# resume_from at one and the run continues at the next optimiser step in the same data
+# order, with the optimiser and schedule where they were. Not `generator.resume_from`,
+# which loads a finished arm's weights and only decodes.
+resume_every: null
+resume_from: null
+
 # Refuses to start a full run until the 20-example/100-step overfit check has passed.
 # Leave this on. The bugs it catches — a misaligned loss mask, a detached fusion path, a
 # splice on the wrong positions — are all invisible in the loss curve of a full run.

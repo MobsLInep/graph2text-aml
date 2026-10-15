@@ -196,6 +196,31 @@ class ShuffledGraphFusion(nn.Module):
         gate = getattr(self.fusion, "gate_value", None)
         return gate() if callable(gate) else None
 
+    def set_target_rms(self, value: float) -> None:
+        """Pass the soft-token scale through to the wrapped variant.
+
+        The generator sets this from the base model's input-embedding RMS by looking for
+        the method on the module it was handed. Without it here the control's projector
+        was never scaled: on Llama-3.1-8B its soft tokens entered the prompt tens of times
+        larger than the treatment arm's, and A1 differed from S1 in a second way that
+        nothing recorded (D-111). A CPU stub's embedding RMS is about 1, where an unscaled
+        projector and a scaled one are the same thing.
+
+        Args:
+            value: The RMS to scale the projected tokens to.
+
+        Raises:
+            TypeError: If the wrapped variant cannot be scaled. The control must not be
+                the arm that silently skips it.
+        """
+        setter = getattr(self.fusion, "set_target_rms", None)
+        if not callable(setter):
+            raise TypeError(
+                f"{type(self.fusion).__name__} has no set_target_rms; the control cannot "
+                "be given the treatment arm's soft-token scale"
+            )
+        setter(value)
+
     def _shuffled(self, pooled_tokens: Tensor) -> Tensor:
         """Break the correspondence between cases and their graph tokens.
 

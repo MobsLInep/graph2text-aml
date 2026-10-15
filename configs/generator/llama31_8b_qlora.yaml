@@ -43,8 +43,18 @@ use_fusion: true
 # undo that selection, so an unfrozen run is a separate arm rather than a better default.
 freeze_encoder: true
 gradient_checkpointing: true
+# A checkpoint written by the trainer. When set, the entrypoint trains nothing: it loads the
+# adapters, the fusion projector and the encoder, and decodes the test split. This is how
+# A5 reuses S1's weights, and how a finished arm is re-decoded without retraining it.
+resume_from: null
 
 generate:
+  # Cases per decoding batch. Generation holds no backward graph, so it fits more rows
+  # than training does; it changes throughput and nothing else.
+  batch_size: 8
+  # Decode only the first N test cases by case id. null decodes the whole split, which is
+  # what every reported number uses.
+  test_limit: null
   max_new_tokens: 512
   # Greedy for every reported number: a sampled number is a sample, and reporting one
   # without its variance overstates precision.

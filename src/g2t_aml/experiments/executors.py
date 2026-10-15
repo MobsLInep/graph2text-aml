@@ -22,7 +22,7 @@ executed against a real model or a real endpoint.
 from __future__ import annotations
 
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +161,65 @@ def _paths_for(directory: Path) -> tuple[Path, Path]:
 # ------------------------------------------------------------------- the CPU arms ---
 
 
+def encoder_scores_path(metrics_dir: Path, arm: str) -> Path:
+    """Locate the per-case scores of one encoder arm.
+
+    The one definition of where that file lives, used by ``scripts/07b_score_cases.py`` to
+    write it and by B2 to read it. They were two string literals in two files, and the
+    writer's did not exist: B2 asked for a file no script produced (D-109).
+
+    Args:
+        metrics_dir: ``cfg.paths.metrics_dir``.
+        arm: The encoder arm, e.g. ``"gatv2"``.
+
+    Returns:
+        ``<metrics_dir>/encoder/scores_<arm>.jsonl``.
+    """
+    return Path(metrics_dir) / "encoder" / f"scores_{arm}.jsonl"
+
+
+def write_encoder_scores(metrics_dir: Path, arm: str, rows: Iterable[Mapping[str, Any]]) -> Path:
+    """Write one encoder arm's per-case risk scores where B2 reads them.
+
+    Args:
+        metrics_dir: ``cfg.paths.metrics_dir``.
+        arm: The encoder arm the scores came from.
+        rows: One mapping per case carrying ``case_id`` and ``gnn_risk_score``; any other
+            key is kept.
+
+    Returns:
+        The path written.
+
+    Raises:
+        KeyError: If a row lacks ``case_id`` or ``gnn_risk_score``.
+    """
+    path = encoder_scores_path(metrics_dir, arm)
+    write_jsonl(
+        path,
+        [
+            {**row, "case_id": str(row["case_id"]), "score": float(row["gnn_risk_score"])}
+            for row in rows
+        ],
+    )
+    return path
+
+
+def load_encoder_scores(path: Path) -> dict[str, float]:
+    """Read per-case risk scores written by :func:`write_encoder_scores`.
+
+    Args:
+        path: The scores file.
+
+    Returns:
+        Case id to risk score. Rows without both keys are skipped.
+    """
+    return {
+        str(row["case_id"]): float(row["score"])
+        for row in read_jsonl(path)
+        if isinstance(row, dict) and "case_id" in row and "score" in row
+    }
+
+
 def run_template_baseline(spec: SystemSpec, seed: int, directory: Path) -> dict[str, Any]:
     """Produce B1's or B2's outputs.
 
@@ -201,17 +260,13 @@ def run_template_baseline(spec: SystemSpec, seed: int, directory: Path) -> dict[
                 f"{spec.system_id} needs metrics_dir in its run context; it is resolved "
                 "from cfg.paths.metrics_dir by the entrypoint"
             )
-        scores_path = Path(str(metrics_dir)) / "encoder" / f"scores_{spec.encoder_arm}.jsonl"
+        scores_path = encoder_scores_path(Path(str(metrics_dir)), str(spec.encoder_arm))
         if not scores_path.is_file():
             raise ExecutorError(
                 f"{spec.system_id} needs the Phase 7 scores at {scores_path}; run "
                 "`make score-cases` first"
             )
-        predictions = {
-            str(row["case_id"]): float(row["score"])
-            for row in read_jsonl(scores_path)
-            if isinstance(row, dict) and "case_id" in row and "score" in row
-        }
+        predictions = load_encoder_scores(scores_path)
         rows = render_classifier_template_baseline(
             case_ids, narratives, predictions, system=spec.system_id
         )

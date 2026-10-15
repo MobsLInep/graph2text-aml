@@ -42,6 +42,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from g2t_aml.corpus.factsio import load_case_facts_file
+from g2t_aml.experiments.executors import write_encoder_scores
 from g2t_aml.facts.schema import (
     CASE_FACTS_SCHEMA_VERSION,
     EXTRACTOR_VERSION,
@@ -257,6 +258,10 @@ def _run(cfg: DictConfig) -> None:  # noqa: PLR0915 -- one linear score-and-writ
         }
         write_json(run_dir / "score_cases.json", report)
         write_json(Path(cfg.paths.metrics_dir) / "encoder" / "score_cases.json", report)
+        # The per-case scores, where the classify-then-template baseline (B2) reads them.
+        arm = model_version.split("-seed", maxsplit=1)[0]
+        scores_file = write_encoder_scores(Path(cfg.paths.metrics_dir), arm, rows)
+        log.info("wrote %d per-case scores to %s", len(rows), scores_file)
         RunContext.capture(
             experiment_name=str(cfg.experiment.name),
             cfg=cfg,

@@ -223,9 +223,14 @@ class TestTokenization:
         text = "The account received 482,300 US Dollar from 9 counterparties."
         assert counter.count(text) >= word_count(text)
 
-    def test_asking_for_an_unavailable_tokenizer_raises_rather_than_falling_back(self) -> None:
+    def test_asking_for_an_unavailable_tokenizer_raises_rather_than_falling_back(
+        self, tmp_path
+    ) -> None:
+        # A local path that does not exist, not a hub id: with the llm extra installed and a
+        # Hugging Face login a real model id loads, and this would fail on exactly the
+        # machines that can train.
         with pytest.raises(TokenizerUnavailableError):
-            get_token_counter("meta-llama/Llama-3.1-8B")
+            get_token_counter(str(tmp_path / "no-such-tokenizer"))
 
 
 class TestPiiScanner:

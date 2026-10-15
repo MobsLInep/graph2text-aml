@@ -3073,3 +3073,280 @@ Every number in `docs/RELATED_WORK.md` §1–§2 was therefore taken from the pr
 from an abstract or a summary. Had we quoted the secondary source, we would have compared
 our 0.8720 against a number that does not mean what it appears to mean — in the direction
 that flatters us.
+
+---
+
+## D-104
+
+**The first generator runs train on Bronze alone, for one epoch, and say so.**
+
+*Phase 9, 2026-10-05, the first session on hardware that can load the base model.*
+
+The configured curriculum is Bronze+Silver for one epoch and Silver alone for two. Silver
+has zero records (no teacher call has ever been made), so two of the three configured
+epochs have no data and the first has half of it. The Gate 8 pilot therefore composes
+`training.curriculum=[{name: bronze_only, tiers: [bronze], epochs: 1}]` and
+`training.epochs=1`, for **every** arm, as a command-line override recorded in each run's
+resolved config. `configs/training/generator.yaml` is unchanged: the configured curriculum
+is still the intended one.
+
+**What this costs, stated before the numbers exist.** Bronze omits an exculpatory fact in
+92% of its narratives (H9, note 24) and is stylistically flat (distinct-2 0.035). A model
+trained only on Bronze is being taught that omission and that flatness. An H9 rate near
+Bronze's from a Bronze-trained arm is the expected outcome and says nothing about the
+architecture. The S1-versus-A1 comparison is unaffected, because both arms see the same
+targets; any claim about *narrative quality* from these runs is not.
+
+---
+
+## D-105
+
+**On a 16 GB card every arm runs at batch 1 with accumulation 32, and `sdpa` attention.**
+
+*Phase 9, 2026-10-05. Measured on an RTX A4000 with the real Llama-3.1-8B at nf4.*
+
+| | Measured |
+|---|---|
+| Model loaded | 7.6 GB, of which 3.9 GB is `embed_tokens` + `lm_head` cast to fp32 by k-bit preparation |
+| Prompt + completion length, Bronze train (n=600) | 776-944 tokens; nothing approaches `max_seq_len` |
+| Batch 1, one forward/backward | peak 9.9 GB, ~6.6-7.1 s per example |
+| Batch 2, one forward/backward | peak 12.3-13.1 GB |
+
+Batch 2 plus optimiser state plus a Windows desktop over-commits 16 GB. WSL then spills
+into shared system memory instead of raising: the run does not fail, it takes **31 s per
+pass instead of 7**, which looks like a slow card rather than a wrong configuration.
+`per_device_batch_size=1`, `gradient_accumulation=32` keeps the configured effective batch
+of 32. `flash_attention_2` is not installable from `uv.lock`, so `sdpa`; the generator
+config already says that changes throughput and nothing else.
+
+**Applied to every arm or to none.** Batch size 1 changes one thing that is not memory: the
+A1 control's across-batch derangement has no second row to swap with and takes the
+ring-buffer path D-071 built for exactly this. `max_seq_len` was **not** reduced - the
+documented OOM fallback - because no prompt comes within a factor of two of it.
+
+One Bronze epoch is ~19 h per arm on this card and the overfit check ~3.9 h. A 24 GB card
+runs the configured regime unchanged.
+
+---
+
+## D-106
+
+**The overfit check is micro-batched and restores the weights it trained.**
+
+*Phase 9, 2026-10-05.*
+
+Two changes to `overfit_check`, both found by running it on the real model.
+
+**It pushed all twenty examples through in one forward pass**, which needs roughly 24 GB at
+an 8B base. `micro_batch_size` accumulates the same full-batch gradient over several
+passes, each weighted by its share of the *supervised tokens* - the loss is a mean over
+those, so a pass's share of the gradient is its share of tokens, not of rows. Step-0 loss
+on the real model: 2.3368 chunked in twos, 2.3367 chunked in ones. `None` keeps the single
+pass.
+
+**It never put the weights back.** The check runs a hundred AdamW steps at 1e-3 on the
+generator it is handed, and the entrypoint then trained that same object. Every "full run"
+would have started from adapters and a projector already memorised on twenty training
+cases, not from the initialisation the arm is described as trained from. S1 and A1 would
+both have been affected, so the comparison would have survived; the description of what
+was trained would not. The check now snapshots the trainable parameters and restores them,
+and a test asserts bit-equality afterwards.
+
+---
+
+## D-107
+
+**Decoding left-pads, keeps a key-value cache, and projects only the final position.**
+
+*Phase 9, 2026-10-05. `models/generator/inference.py::generate_batch`.*
+
+The decoding loop had run only against the CPU stub. Against a real Llama it was wrong in
+one way and unusable in two.
+
+1. **Wrong: the next token was read from a padding position.** The collator right-pads to
+   a multiple of 8, which is correct for training, and the loop read
+   `logits[:, -1, :]`. For any prompt whose length is not a multiple of 8 - seven in
+   eight, at batch size one included - that position is padding. Prompts are now
+   left-padded inside `generate_batch`.
+2. **Unusable: no key-value cache.** Every generated token re-ran the whole prompt. With a
+   cache each step feeds one position; a backbone that returns no cache (the stub) keeps
+   the old path.
+3. **Unusable on 16 GB: the prompt pass projected every position onto the vocabulary** -
+   rows x prompt length x 128k floats, 4.6 GB for the ten probe cases. The trunk is now
+   run directly and the head applied to the final position only.
+
+**Validated against an implementation we did not write** (invariant 1's rule, applied to
+the generator): Hugging Face's own `model.generate`, greedy, one unpadded prompt at a time,
+on a real Llama-3.2-1B in fp32 with four real Bronze prompts of different lengths.
+
+| Loop | Outputs identical to `model.generate` | Time, batch of 4 x 40 tokens |
+|---|---|---|
+| As committed at `ef267d0` | **0 of 8** (empty strings and prompt echoes) | 297.6 s |
+| After this change | **8 of 8** | 2.5 s |
+
+**Consequence.** No generation existed before this change, so no number is retracted. But
+every probe row and every test-set narrative the committed loop would have produced on a
+real model would have been corrupted, and the faithfulness metric would have scored the
+corruption as the model's.
+
+---
+
+## D-108
+
+**The training entrypoint decodes the test split, and `generator.resume_from` exists.**
+
+*Phase 9/11, 2026-10-05.*
+
+`experiments/executors.run_trained_generator` invokes `scripts/09_train_generator.py` and
+then requires `generations.jsonl` in the run directory; for A5 it passes
+`generator.resume_from=<S1's checkpoint>` and `training.epochs=0`. **Neither existed.** The
+entrypoint trained, wrote checkpoints and stopped, and `resume_from` was not a config key,
+so the override would have been a Hydra struct error. A trained arm could not have
+produced a row in the results table.
+
+The entrypoint now ends by decoding the test split greedily into `generations.jsonl`, in
+the shape `eval.types.load_system_outputs` reads, and `resume_from` loads a checkpoint and
+decodes without training. Test records are read straight from `bronze.jsonl` rather than
+through the training loader, whose job is to keep reserved Gold test cases *out*.
+
+**Not done, and labelled on every row:** the inference guard is not applied. Decoding is
+greedy and unguarded and each row carries `guard: false`. D-073 makes guarded and unguarded
+separate table rows; today only the unguarded one can be produced, so a registry system
+whose spec says `guard=true` is **not** what these files contain.
+
+**Also fixed in the same entrypoint, none of which a test could have caught because nothing
+executed it:** a read of a config key that does not exist (`cfg.hydra_run_dir`), `stage()`
+called with its arguments reversed at all six sites, a call to a `CaseFacts.from_dict` that
+was never written, a `strict=` argument `load_reservation` does not take, and the encoder
+and fusion projector left on the CPU beside a CUDA backbone. The 119 Phase 8+9 tests drive
+the harness directly against a stub and were all green throughout.
+
+---
+
+## D-109
+
+**`score-cases` writes the per-case scores B2 reads, through one shared path.**
+
+*Phase 7/11, 2026-10-11.*
+
+The first real run of B2 failed in 13 s: `experiments/executors.py` read
+`<metrics_dir>/encoder/scores_<arm>.jsonl`, and told the user to run `make score-cases`,
+which had just succeeded. `scripts/07b_score_cases.py` wrote the fact records, the Parquet
+aggregate and a report, and **no script anywhere wrote that file**. The reader and the
+writer were two modules that each believed the other owned the hand-off; B2 had never been
+executed, and the matrix tests drive it with a scores file the test itself creates.
+
+`executors.py` now owns the path (`encoder_scores_path`), the writer
+(`write_encoder_scores`) and the reader (`load_encoder_scores`); the script calls the
+writer with the rows it already builds. `tests/unit/test_encoder_scores_handoff.py` writes
+through one and reads through the other.
+
+Nothing in `facts/` or `eval/` changed. `make score-cases` was re-run to produce the file;
+it rewrites `model_signal` from the same checkpoint (`gatv2-seed42-epoch44`).
+
+---
+
+## D-110
+
+**An interrupted generator run can be continued, and a continued run says so.**
+
+*Phase 9, 2026-10-11, after losing two S1 runs to the session they were launched from.*
+
+A checkpoint was enough to decode from and not to continue from: it carried no optimiser
+moments and no schedule position, and the entrypoint had no way to use one anyway. At
+batch 1 on a 16 GB card one Bronze epoch is ~21 h after a ~4 h overfit check, so every
+interruption cost a day.
+
+**What is saved.** `GeneratorTrainer.save_resume_state` rewrites one file per run,
+`<run_dir>/<arm>_resume.pt`: the checkpoint payload plus the optimiser state, the schedule
+state, the torch RNG state and the overfit result the run was admitted on. It is written
+with every step checkpoint and every `training.resume_every` steps, atomically. It is
+working state, not a result, which is why it is one file that is replaced.
+
+**What a continuation is.** `training.resume_from=<file>` restores all of that and
+continues at the next optimiser step. A stage's shuffle is seeded with the step the stage
+*began* at (`TrainingState.stage_start_step`) - the same number as before on a fresh run -
+so the continued run sees the batches the interrupted one would have. The overfit check is
+not repeated. A new Hydra run directory is used (invariant 6); the probe samples are copied
+forward so the drift record is whole, and `resumed_from.json` names the file.
+
+**What is refused.** A plain checkpoint (no optimiser state); another arm's file; and a
+regime that differs in anything except `eval_every`, `save_every` and `resume_every`. A
+resume file whose overfit result is absent does not get past `require_overfit_check`.
+
+**What is recorded.** `TrainingState.resumed_at_steps` is appended on every resume and is
+in every checkpoint written afterwards. A table row from a continued run is traceable to
+the steps at which it was interrupted.
+
+**How exact it is.**
+
+| Backbone | Test | Result |
+|---|---|---|
+| CPU stub | interrupt at step 3 of 8, continue, compare every trainable weight | **bit-identical** |
+| Llama-3.1-8B, nf4, `PagedAdamW8bit`, sdpa | interrupt at step 4 of 8 in one process, continue in another | distance to the uninterrupted endpoint 0.000241, against 1.406 moved by steps 5-8: **ratio 0.0002** |
+
+Not bit-identical on CUDA and not claimed to be: sdpa attention is non-deterministic, so
+two *uninterrupted* runs differ by the same order.
+
+**Two things a continuation does not restore**, both small and both stated: the A1
+control's ring buffer of previous graph tokens starts empty, so the first example after a
+resume is paired with itself rather than a foreign graph (one example in 10,488, counted in
+`ShuffleStats`); and gradients accumulated towards a step that had not completed are lost,
+which is why the resume point is always a completed step.
+
+**Also changed:** a checkpoint's `lm_trainable_state` now holds every language-model
+weight with `requires_grad`, not only those with `lora` in the name. On the real model the
+two sets are the same; on anything where they are not, the old filter dropped trained
+weights silently - which is how the stub exposed it.
+
+The resume file is 535 MB on the real model and takes 2.5 s to write.
+
+---
+
+## D-111
+
+**The A1 control is given the treatment arm's soft-token scale. It was not.**
+
+*Phase 8/9, 2026-10-13. Found by the overfit check on the first real A1 run.*
+
+`Graph2TextGenerator._align_soft_token_scale` sets the projector's `target_rms` from the
+base model's input-embedding RMS, and finds the setter with
+`getattr(self.fusion_projector, "set_target_rms", None)`. On A1 the registered module is
+`ShuffledGraphFusion`, which forwarded `n_tokens` and `gate_value` to the variant it wraps
+and **not** `set_target_rms`. The lookup returned None, the method returned quietly, and
+the control's projector was never scaled.
+
+| | S1 | A1 before | A1 after |
+|---|---|---|---|
+| `target_rms` on the projector | 0.01057 | **None** | 0.01057 |
+| Overfit check, step-0 loss (Llama-3.1-8B, same 20 cases) | 2.3367 | **4.9547** | 2.3359 |
+| Overfit check, outcome | passed, 0.0001 | **failed: 0.126 at step 20, 9.09 at step 60, 6.12 final** | not yet re-run |
+
+Llama-3.1-8B's embedding RMS is 0.0106. An unscaled projector emits tokens at roughly unit
+scale, so the control's sixteen soft tokens entered the prompt about two orders of
+magnitude larger than the treatment's. **A1 would have differed from S1 in two things, not
+one**, and the second - a prompt carrying sixteen enormous vectors - damages the model on
+its own. Had the run been allowed to proceed, "S1 beats A1" would have been the likely
+reading, and it would have measured the scale of the control's tokens rather than whether
+the graph is read. It is the same failure as note 22 (the control that composed as a
+second treatment arm), pointing the other way.
+
+**Why nothing caught it earlier.** The CPU stub's embeddings have an RMS of about 1.0,
+where a projector that was never scaled and one scaled to 1.0 are the same projector.
+`tests/unit/test_generator_configs.py` pins that A1's *config* differs from S1's in the
+shuffle flag alone; nothing compared the two *assembled models*.
+
+**What did catch it.** `require_overfit_check`. A1 started from a loss of 4.95 where S1
+starts from 2.34 on identical examples, and diverged. D-106 made that check affordable on
+this card; this is the first time it has refused a run.
+
+**The fix.** `ShuffledGraphFusion.set_target_rms` passes the value through, and raises if
+the wrapped variant cannot take it - the control must not be the arm that skips a step
+silently. `TestControlMatchesTreatment` builds both arms over a backbone whose embeddings
+are scaled to 0.02 and requires equal `target_rms` and equal emitted token norms; all three
+of its tests fail with the fix reverted.
+
+**No result is affected.** No A1 number exists. S1 does not use the wrapper, and its
+within-run shuffled control (`callbacks.py`) builds `ShuffledGraphFusion` around S1's
+already-scaled projector, so the probe rows in `history_S1.jsonl` were computed at the
+right scale.

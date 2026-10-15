@@ -353,9 +353,26 @@ class Graph2TextGenerator(nn.Module):
             for param in self.encoder.parameters():
                 param.requires_grad_(False)
 
+        self._colocate_with_language_model()
+
         if self.fusion_projector is not None:
             assert_projector_is_fp32(self.fusion_projector, name="fusion_projector")
             self._align_soft_token_scale()
+
+    def _colocate_with_language_model(self) -> None:
+        """Move the encoder and the fusion projector onto the language model's device.
+
+        ``device_map="auto"`` places the quantised base, and nothing else places the two
+        modules this class adds — against a CPU stub that is invisible, and against a CUDA
+        backbone the first forward pass fails on a device mismatch. Device only, never a
+        dtype: a cast here would undo the fp32 guarantee the constructor asserts next.
+        """
+        modules = [m for m in (self.encoder, self.fusion_projector) if m is not None]
+        if not modules:
+            return
+        device = self.language_model.get_input_embeddings().weight.device
+        for module in modules:
+            module.to(device)
 
     @property
     def lm_dim(self) -> int:

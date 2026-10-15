@@ -169,6 +169,103 @@ def _sample_next(
     return index.gather(-1, picked).squeeze(-1)
 
 
+def _left_pad(
+    input_ids: Tensor, attention_mask: Tensor, soft_mask: Tensor
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Move each row's padding from the right to the left, and drop all-padding columns.
+
+    Args:
+        input_ids: ``[B, T]`` right-padded token ids.
+        attention_mask: ``[B, T]``, 1 on real positions.
+        soft_mask: ``[B, T]`` boolean, True at the reserved soft-token positions.
+
+    Returns:
+        The three tensors with every row's real tokens ending at the final column. Each
+        row keeps its own tokens in their own order, so the soft-token positions still
+        line up with the row they belong to.
+    """
+    width = input_ids.size(1)
+    shifts = [width - int(n) for n in attention_mask.sum(dim=1)]
+    keep = min(shifts)
+
+    def shift(tensor: Tensor) -> Tensor:
+        rows = [torch.roll(tensor[row], shifts=by, dims=0) for row, by in enumerate(shifts)]
+        return torch.stack(rows)[:, keep:]
+
+    return shift(input_ids), shift(attention_mask), shift(soft_mask)
+
+
+def _decoder_and_head(language_model: Any) -> tuple[Any, Any] | None:
+    """Split a Hugging Face causal LM into its decoder trunk and its output head.
+
+    Only the final position's logits choose the next token, but a causal LM's own forward
+    pass projects every position onto the vocabulary — on the prompt pass that is
+    ``rows x prompt_length x vocab`` floats, several gigabytes for a batch of ten at an 8B
+    base's 128k vocabulary. Running the trunk and applying the head to one position gives
+    the same logits for that position without the rest.
+
+    Args:
+        language_model: The PEFT-wrapped base, a bare Hugging Face model, or a stub.
+
+    Returns:
+        ``(decoder, head)``, or None when the model does not expose them — the CPU stub —
+        in which case the caller uses the model's ordinary forward pass. LoRA adapters are
+        injected into the trunk's own layers, so calling the trunk directly still runs them.
+    """
+    unwrap = getattr(language_model, "get_base_model", None)
+    base = unwrap() if callable(unwrap) else language_model
+    prefix = getattr(base, "base_model_prefix", None)
+    decoder = getattr(base, prefix, None) if isinstance(prefix, str) and prefix else None
+    get_head = getattr(base, "get_output_embeddings", None)
+    head = get_head() if callable(get_head) else None
+    if decoder is None or head is None or not hasattr(head, "weight"):
+        return None
+    return decoder, head
+
+
+def _decode_step(
+    language_model: Any,
+    split: tuple[Any, Any] | None,
+    step_inputs: Tensor,
+    attention_mask: Tensor,
+    past: Any,
+) -> tuple[Tensor, Any]:
+    """Run one decoding step.
+
+    Args:
+        language_model: The language model.
+        split: The result of :func:`_decoder_and_head`.
+        step_inputs: The embeddings to feed — the whole prompt on the first step, one new
+            position afterwards when a cache is in use.
+        attention_mask: The mask over everything fed so far.
+        past: The key-value cache from the previous step, or None.
+
+    Returns:
+        ``[B, vocab]`` logits for the final position, and the cache to pass to the next
+        step — None when the backbone keeps none.
+    """
+    if split is None:
+        out = language_model(
+            inputs_embeds=step_inputs,
+            attention_mask=attention_mask,
+            labels=None,
+            past_key_values=past,
+            use_cache=True,
+        )
+        return out.logits[:, -1, :], getattr(out, "past_key_values", None)
+
+    decoder, head = split
+    out = decoder(
+        inputs_embeds=step_inputs,
+        attention_mask=attention_mask,
+        past_key_values=past,
+        use_cache=True,
+    )
+    final_hidden = out.last_hidden_state[:, -1, :]
+    logits = head(final_hidden.to(head.weight.dtype))
+    return logits, getattr(out, "past_key_values", None)
+
+
 @torch.no_grad()
 def generate_batch(
     generator: Graph2TextGenerator,
@@ -211,11 +308,20 @@ def generate_batch(
     batch = batch.to(device)
     n_return = cfg.num_return_sequences
 
+    # The collator pads on the right, which is correct for training and wrong here: the
+    # next token is read from the final position, and on a right-padded row that position
+    # is padding — for any prompt whose length is not a multiple of the collator's
+    # `pad_to_multiple_of`, at batch size one included. Decoding needs the prompt to END at
+    # the final position, so the padding moves to the left.
+    row_ids, row_attention, row_soft = _left_pad(
+        batch.input_ids, batch.attention_mask, batch.soft_mask
+    )
+
     # Candidates are produced by repeating each row, so one batched forward pass covers
     # every candidate of every case rather than looping the model n times.
-    input_ids = batch.input_ids.repeat_interleave(n_return, dim=0)
-    attention_mask = batch.attention_mask.repeat_interleave(n_return, dim=0)
-    soft_mask = batch.soft_mask.repeat_interleave(n_return, dim=0)
+    input_ids = row_ids.repeat_interleave(n_return, dim=0)
+    attention_mask = row_attention.repeat_interleave(n_return, dim=0)
+    soft_mask = row_soft.repeat_interleave(n_return, dim=0)
 
     embed = generator.language_model.get_input_embeddings()
     inputs_embeds = embed(input_ids)
@@ -234,11 +340,18 @@ def generate_batch(
     produced: list[list[int]] = [[] for _ in range(n_rows)]
     finished = torch.zeros(n_rows, dtype=torch.bool)
 
+    # With a key-value cache each step feeds one new position; without one it re-runs the
+    # whole sequence, which on an 8B base is minutes per narrative instead of seconds. A
+    # backbone that returns no cache (the CPU stub) keeps the full-sequence path.
+    step_inputs = inputs_embeds
+    past: Any = None
+    split = _decoder_and_head(generator.language_model)
+
     for _ in range(cfg.max_new_tokens):
-        out = generator.language_model(
-            inputs_embeds=inputs_embeds, attention_mask=attention_mask, labels=None
+        final_logits, cache = _decode_step(
+            generator.language_model, split, step_inputs, attention_mask, past
         )
-        next_ids = _sample_next(out.logits[:, -1, :].float().cpu(), cfg, rng)
+        next_ids = _sample_next(final_logits.float().cpu(), cfg, rng)
 
         for row in range(n_rows):
             if not bool(finished[row]):
@@ -249,11 +362,16 @@ def generate_batch(
             break
 
         step_embeds = embed(next_ids.to(device)).unsqueeze(1)
-        inputs_embeds = torch.cat([inputs_embeds, step_embeds], dim=1)
         attention_mask = torch.cat(
             [attention_mask, torch.ones((n_rows, 1), dtype=attention_mask.dtype, device=device)],
             dim=1,
         )
+        past = cache
+        if past is None:
+            inputs_embeds = torch.cat([inputs_embeds, step_embeds], dim=1)
+            step_inputs = inputs_embeds
+        else:
+            step_inputs = step_embeds
 
     results: list[GenerationResult] = []
     for case_index, case_id in enumerate(batch.case_ids):

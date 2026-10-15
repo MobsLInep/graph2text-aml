@@ -35,7 +35,7 @@ import torch
 
 from g2t_aml.models.generator.dataset import GeneratorBatch, GeneratorDataset, GraphCollator
 from g2t_aml.models.generator.model import Graph2TextGenerator
-from g2t_aml.utils.io import ensure_dir
+from g2t_aml.utils.io import atomic_path, ensure_dir
 
 __all__ = [
     "TrainingConfig",
@@ -75,6 +75,9 @@ class TrainingConfig:
         eval_every: Steps between diagnostic callbacks.
         save_every: Steps between checkpoints, or None to save only at stage boundaries.
         require_overfit_check: Refuse to start a full run until the overfit test passes.
+        resume_every: Steps between rewrites of the single resume file, on top of the one
+            written with every step checkpoint. None writes it only then. It bounds what an
+            interruption costs and changes nothing about the run (D-110).
     """
 
     epochs: int = 3
@@ -96,6 +99,7 @@ class TrainingConfig:
     eval_every: int = 100
     save_every: int | None = 500
     require_overfit_check: bool = True
+    resume_every: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the config as a plain mapping.
@@ -117,6 +121,10 @@ class TrainingState:
         stage: Name of the current curriculum stage.
         best_faithfulness: Best held-out supported-rate seen.
         history: Per-diagnostic-step records, written to the run directory as JSONL.
+        stage_start_step: ``step`` when the current stage began. It seeds the stage's
+            shuffle, and with ``step`` it locates the next unseen batch on a resume.
+        resumed_at_steps: Every step at which this run was picked up from a resume file. A
+            run that was interrupted says so in each checkpoint it writes afterwards.
     """
 
     step: int = 0
@@ -124,6 +132,8 @@ class TrainingState:
     stage: str = ""
     best_faithfulness: float = 0.0
     history: list[dict[str, Any]] = field(default_factory=list)
+    stage_start_step: int = 0
+    resumed_at_steps: list[int] = field(default_factory=list)
 
 
 def build_optimizer(
@@ -256,7 +266,13 @@ def group_grad_norms(optimizer: torch.optim.Optimizer) -> dict[str, float]:
 
 
 def _batches(
-    dataset: GeneratorDataset, collator: GraphCollator, *, batch_size: int, shuffle: bool, seed: int
+    dataset: GeneratorDataset,
+    collator: GraphCollator,
+    *,
+    batch_size: int,
+    shuffle: bool,
+    seed: int,
+    skip: int = 0,
 ) -> Iterator[GeneratorBatch]:
     """Iterate a dataset in collated batches.
 
@@ -266,6 +282,8 @@ def _batches(
         batch_size: Rows per batch.
         shuffle: Whether to shuffle the order.
         seed: Shuffle seed.
+        skip: Leading batches to pass over without collating them. The order is the one
+            ``seed`` gives, so a resumed stage continues at the batch it stopped before.
 
     Returns:
         An iterator of batches.
@@ -274,7 +292,7 @@ def _batches(
     if shuffle:
         generator = torch.Generator().manual_seed(seed)
         order = [order[i] for i in torch.randperm(len(order), generator=generator).tolist()]
-    for start in range(0, len(order), batch_size):
+    for start in range(skip * batch_size, len(order), batch_size):
         chunk = order[start : start + batch_size]
         yield collator([dataset[i] for i in chunk])
 
@@ -289,6 +307,7 @@ def overfit_check(
     lr: float = 1e-3,
     fusion_lr: float = 1e-3,
     threshold: float = 0.15,
+    micro_batch_size: int | None = None,
     device: str = "cpu",
     log: Any = None,
 ) -> dict[str, float]:
@@ -300,6 +319,9 @@ def overfit_check(
     overwriting the wrong positions — and every one of those bugs produces a full training
     run that looks entirely normal and a model that is not doing what the paper says.
 
+    The generator's trainable parameters are restored to their starting values before
+    returning, so the check leaves no trace in the run it gates.
+
     Args:
         generator: The assembled generator.
         dataset: A dataset to draw the examples from.
@@ -309,6 +331,10 @@ def overfit_check(
         lr: LoRA learning rate for the check, higher than the real run's.
         fusion_lr: Fusion learning rate for the check.
         threshold: Final loss below this counts as passed.
+        micro_batch_size: Rows per forward pass. None runs all ``n_examples`` in one pass,
+            which an 8B base needs roughly a 24 GB card for. A smaller value accumulates
+            the same full-batch gradient over several passes, each weighted by its share
+            of the supervised tokens, so every step is the one the single pass would take.
         device: Device to run on.
         log: Optional logger.
 
@@ -316,7 +342,8 @@ def overfit_check(
         ``initial_loss``, ``final_loss``, ``threshold`` and ``passed`` as a mapping.
 
     Raises:
-        ValueError: If the dataset holds fewer than ``n_examples`` examples.
+        ValueError: If the dataset holds fewer than ``n_examples`` examples, if
+            ``micro_batch_size`` is less than one, or if no token is supervised.
     """
     if len(dataset) < n_examples:
         raise ValueError(
@@ -324,34 +351,56 @@ def overfit_check(
         )
 
     subset = [dataset[i] for i in range(n_examples)]
-    batch = collator(subset).to(device)
+    size = n_examples if micro_batch_size is None else micro_batch_size
+    if size < 1:
+        raise ValueError(f"micro_batch_size must be at least 1, got {size}")
+    batches = [collator(subset[i : i + size]).to(device) for i in range(0, n_examples, size)]
+    # The loss is a mean over supervised tokens, so a pass's share of the full-batch
+    # gradient is its share of those tokens, not its share of the rows.
+    supervised = [float(batch.n_supervised_tokens) for batch in batches]
+    total_supervised = sum(supervised)
+    if total_supervised == 0:
+        raise ValueError("no supervised token in the overfit examples; nothing to memorise")
     generator.train()
 
     groups = generator.trainable_parameter_groups(
         lora_lr=lr, fusion_lr=fusion_lr, encoder_lr=fusion_lr
     )
+    # This is a check, not a warm-up. Without the snapshot the run that follows starts
+    # from adapters and a projector already memorised on these examples at a high rate,
+    # rather than from the initialisation the arm is supposed to be trained from.
+    trained = [p for group in groups for p in group["params"]]
+    snapshot = [p.detach().to("cpu", copy=True) for p in trained]
     optimizer = torch.optim.AdamW(groups)
 
     initial = float("nan")
     loss_value = float("nan")
     for step in range(n_steps):
         optimizer.zero_grad(set_to_none=True)
-        out = generator(
-            input_ids=batch.input_ids,
-            attention_mask=batch.attention_mask,
-            labels=batch.labels,
-            soft_mask=batch.soft_mask,
-            graph_batch=batch.graph_batch,
-        )
-        if out.loss is None:
-            raise ValueError("the model returned no loss; labels were not supplied")
-        out.loss.backward()
+        loss_value = 0.0
+        for batch, n_tokens in zip(batches, supervised, strict=True):
+            out = generator(
+                input_ids=batch.input_ids,
+                attention_mask=batch.attention_mask,
+                labels=batch.labels,
+                soft_mask=batch.soft_mask,
+                graph_batch=batch.graph_batch,
+            )
+            if out.loss is None:
+                raise ValueError("the model returned no loss; labels were not supplied")
+            share = n_tokens / total_supervised
+            (out.loss * share).backward()
+            loss_value += float(out.loss.detach()) * share
         optimizer.step()
-        loss_value = float(out.loss.detach())
         if step == 0:
             initial = loss_value
         if log is not None and step % 20 == 0:
             log.info("  overfit step %3d  loss %.4f", step, loss_value)
+
+    optimizer.zero_grad(set_to_none=True)
+    with torch.no_grad():
+        for param, saved in zip(trained, snapshot, strict=True):
+            param.copy_(saved.to(param.device))
 
     passed = loss_value < threshold
     if log is not None:
@@ -368,6 +417,12 @@ def overfit_check(
         "threshold": threshold,
         "passed": float(passed),
     }
+
+
+def _release_cuda_cache() -> None:
+    """Return the allocator's cached, unused blocks to the device. A no-op without CUDA."""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 class GeneratorTrainer:
@@ -414,6 +469,7 @@ class GeneratorTrainer:
         self.state = TrainingState()
         self.optimizer: torch.optim.Optimizer | None = None
         self.scheduler: Any = None
+        self._overfit_result: dict[str, float] | None = None
 
     def _total_steps(self, dataset_size: int) -> int:
         """Compute how many optimiser steps the run will take.
@@ -432,13 +488,17 @@ class GeneratorTrainer:
         stages: Sequence[tuple[str, GeneratorDataset]],
         *,
         overfit_result: dict[str, float] | None = None,
+        resume_from: str | Path | None = None,
     ) -> TrainingState:
-        """Run the curriculum.
+        """Run the curriculum, from the start or from a resume file.
 
         Args:
             stages: ``(stage_name, dataset)`` in curriculum order.
             overfit_result: The result of :func:`overfit_check`. Required when
-                ``config.require_overfit_check`` is set.
+                ``config.require_overfit_check`` is set, unless the resume file carries
+                the result the interrupted run passed.
+            resume_from: A file written by :meth:`save_resume_state`. The run continues at
+                the optimiser step after the one it records, in the same data order.
 
         Returns:
             The final training state.
@@ -446,10 +506,16 @@ class GeneratorTrainer:
         Raises:
             RuntimeError: If the overfit check is required and did not pass. Eighteen
                 hours is too long to spend finding out that the loss mask was misaligned.
-            ValueError: If no stages were given.
+            ValueError: If no stages were given, or the resume file belongs to another arm,
+                another regime, or a stage this curriculum does not have.
         """
         if not stages:
             raise ValueError("no curriculum stages to train on")
+        resume_payload: dict[str, Any] | None = None
+        if resume_from is not None:
+            resume_payload = torch.load(resume_from, map_location="cpu", weights_only=False)
+            overfit_result = overfit_result or resume_payload.get("overfit_result")
+        self._overfit_result = dict(overfit_result) if overfit_result else None
         if self.config.require_overfit_check and not (overfit_result or {}).get("passed"):
             raise RuntimeError(
                 "the overfit check has not passed; run overfit_check() first or set "
@@ -466,22 +532,48 @@ class GeneratorTrainer:
             kind=self.config.scheduler,
         )
 
+        resumed_stage: str | None = None
+        if resume_payload is not None:
+            self._restore_resume_state(resume_payload, Path(str(resume_from)).name)
+            resumed_stage = self.state.stage
+            if resumed_stage not in [name for name, _ in stages]:
+                raise ValueError(
+                    f"the resume file stopped in stage {resumed_stage!r}, which this "
+                    f"curriculum does not have ({[name for name, _ in stages]})"
+                )
+
         for stage_name, dataset in stages:
-            self.state.stage = stage_name
+            skip = 0
+            if resumed_stage is not None:
+                if stage_name != resumed_stage:
+                    continue  # completed before the interruption
+                resumed_stage = None
+                skip = (
+                    self.state.step - self.state.stage_start_step
+                ) * self.config.gradient_accumulation
+            else:
+                self.state.stage = stage_name
+                self.state.stage_start_step = self.state.step
             if self.log is not None:
-                self.log.info("stage %s: %d examples", stage_name, len(dataset))
-            self._run_stage(dataset)
+                self.log.info(
+                    "stage %s: %d examples%s",
+                    stage_name,
+                    len(dataset),
+                    f" (resuming after step {self.state.step}, {skip} batches in)" if skip else "",
+                )
+            self._run_stage(dataset, skip_batches=skip)
             self.save_checkpoint(tag=f"stage_{stage_name}")
 
         self.save_checkpoint(tag="final")
         self._write_history()
         return self.state
 
-    def _run_stage(self, dataset: GeneratorDataset) -> None:
+    def _run_stage(self, dataset: GeneratorDataset, *, skip_batches: int = 0) -> None:
         """Train one curriculum stage to completion.
 
         Args:
             dataset: The stage's dataset.
+            skip_batches: Batches of this stage already trained on before an interruption.
         """
         assert self.optimizer is not None and self.scheduler is not None
         self.generator.train()
@@ -494,7 +586,10 @@ class GeneratorTrainer:
             self.collator,
             batch_size=self.config.per_device_batch_size,
             shuffle=True,
-            seed=self.config.seed + self.state.step,
+            # The step the stage began at, not the current one: they are equal on a fresh
+            # stage, and on a resumed one this reproduces the interrupted run's order.
+            seed=self.config.seed + self.state.stage_start_step,
+            skip=skip_batches,
         ):
             batch = raw_batch.to(self.device)
             out = self.generator(
@@ -533,8 +628,13 @@ class GeneratorTrainer:
                     norms,
                     tokens_per_second=tokens_seen / elapsed,
                 )
-            if self.config.save_every and self.state.step % self.config.save_every == 0:
+            saved = bool(self.config.save_every) and self.state.step % self.config.save_every == 0
+            if saved:
                 self.save_checkpoint(tag=f"step_{self.state.step}")
+            if saved or (
+                self.config.resume_every and self.state.step % self.config.resume_every == 0
+            ):
+                self.save_resume_state()
 
     def _diagnose(
         self,
@@ -580,9 +680,15 @@ class GeneratorTrainer:
             )
 
         for callback in self.callbacks:
+            # Training, ten-row generation and an all-layer attention dump each want a
+            # differently shaped several gigabytes. Without handing the allocator's cache
+            # back between them their peaks stack, which on a 16 GB card spills into
+            # shared memory and turns a ten-minute probe into an hour.
+            _release_cuda_cache()
             extra = callback.on_step(self.generator, self.state, batch)
             if extra:
                 row.update(extra)
+        _release_cuda_cache()
 
         self.state.history.append(row)
         if self.log is not None:
@@ -617,6 +723,18 @@ class GeneratorTrainer:
             The path written.
         """
         path = self.run_dir / f"{self.arm}_{tag}.pt"
+        torch.save(self._checkpoint_payload(tag), path)
+        return path
+
+    def _checkpoint_payload(self, tag: str) -> dict[str, Any]:
+        """Assemble what a checkpoint carries.
+
+        Args:
+            tag: Checkpoint name suffix.
+
+        Returns:
+            The payload :meth:`save_checkpoint` writes.
+        """
         payload: dict[str, Any] = {
             "arm": self.arm,
             "tag": tag,
@@ -627,13 +745,86 @@ class GeneratorTrainer:
         }
         lm = self.generator.language_model
         if hasattr(lm, "state_dict"):
+            # Every weight of the language model that training moves: the adapters by name,
+            # and anything else left trainable. Selecting on the name alone would drop the
+            # second kind without a word, and the reloaded model would not be the trained one.
+            trainable = {name for name, param in lm.named_parameters() if param.requires_grad}
             payload["lm_trainable_state"] = {
                 name: param.detach().cpu()
                 for name, param in lm.state_dict().items()
-                if "lora" in name.lower()
+                if "lora" in name.lower() or name in trainable
             }
-        torch.save(payload, path)
+        return payload
+
+    def save_resume_state(self) -> Path:
+        """Rewrite the run's single resume file.
+
+        A checkpoint is enough to *decode* from and not enough to *continue* from: it has
+        no optimiser moments and no schedule position, so training on from one restarts
+        Adam cold at whatever learning rate the step count implies. This file adds both,
+        the random-number state, and the overfit result the run was admitted on. It is
+        working state rather than a result — one file per run, replaced atomically, so an
+        interruption during the write leaves the previous one intact.
+
+        Returns:
+            The path written, ``<run_dir>/<arm>_resume.pt``.
+
+        Raises:
+            RuntimeError: If called before :meth:`train` has built the optimiser.
+        """
+        if self.optimizer is None or self.scheduler is None:
+            raise RuntimeError("there is nothing to resume: train() has not started")
+        payload = self._checkpoint_payload("resume")
+        payload["optimizer_state"] = self.optimizer.state_dict()
+        payload["scheduler_state"] = self.scheduler.state_dict()
+        payload["overfit_result"] = self._overfit_result
+        payload["rng_state"] = {
+            "torch": torch.get_rng_state(),
+            "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        }
+        path = self.run_dir / f"{self.arm}_resume.pt"
+        with atomic_path(path) as tmp:
+            torch.save(payload, tmp)
         return path
+
+    def _restore_resume_state(self, payload: dict[str, Any], name: str) -> None:
+        """Put the trainer back where :meth:`save_resume_state` left it.
+
+        Args:
+            payload: The loaded resume file.
+            name: Its file name, for error messages.
+
+        Raises:
+            ValueError: If the file is a plain checkpoint, belongs to another arm, or was
+                written under a regime that differs in anything but how often diagnostics
+                and files are written. A continued run is reported as one run, so it has
+                to be one.
+        """
+        assert self.optimizer is not None and self.scheduler is not None
+        if "optimizer_state" not in payload or "scheduler_state" not in payload:
+            raise ValueError(
+                f"{name} is a checkpoint, not a resume file: it has no optimiser state, and "
+                "training on from it would not be a continuation of the run that wrote it"
+            )
+        if payload.get("arm") != self.arm:
+            raise ValueError(f"{name} belongs to arm {payload.get('arm')!r}, not {self.arm!r}")
+        cadence = {"eval_every", "save_every", "resume_every"}
+        self._load_payload(
+            payload,
+            name,
+            regime_keys=[k for k in self.config.to_dict() if k not in cadence],
+            strict=True,
+        )
+        self.optimizer.load_state_dict(payload["optimizer_state"])
+        self.scheduler.load_state_dict(payload["scheduler_state"])
+        rng = payload.get("rng_state") or {}
+        if rng.get("torch") is not None:
+            torch.set_rng_state(rng["torch"])
+        if rng.get("cuda") is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(rng["cuda"])
+        self.state.resumed_at_steps.append(self.state.step)
+        if self.log is not None:
+            self.log.info("resumed %s from %s at step %d", self.arm, name, self.state.step)
 
     def load_checkpoint(self, path: str | Path, *, strict: bool = True) -> dict[str, Any]:
         """Restore a checkpoint written by :meth:`save_checkpoint`.
@@ -652,16 +843,38 @@ class GeneratorTrainer:
                 as a converged one.
         """
         payload = torch.load(path, map_location="cpu", weights_only=False)
+        self._load_payload(
+            payload,
+            Path(path).name,
+            regime_keys=("epochs", "lr", "fusion_lr", "per_device_batch_size", "max_seq_len"),
+            strict=strict,
+        )
+        return payload
+
+    def _load_payload(
+        self, payload: dict[str, Any], name: str, *, regime_keys: Sequence[str], strict: bool
+    ) -> None:
+        """Check a payload's regime against this trainer's, then load its weights and state.
+
+        Args:
+            payload: A loaded checkpoint or resume file.
+            name: Its file name, for the error message.
+            regime_keys: The ``TrainingConfig`` fields that must agree.
+            strict: Require every state-dict key to match.
+
+        Raises:
+            ValueError: If any of ``regime_keys`` was recorded with a different value.
+        """
         recorded = payload.get("training_config", {})
         mismatched = {
             key: (recorded.get(key), getattr(self.config, key))
-            for key in ("epochs", "lr", "fusion_lr", "per_device_batch_size", "max_seq_len")
+            for key in regime_keys
             if key in recorded and recorded[key] != getattr(self.config, key)
         }
         if mismatched:
             listed = ", ".join(f"{k}: {was!r} != {now!r}" for k, (was, now) in mismatched.items())
             raise ValueError(
-                f"checkpoint {Path(path).name} was trained under a different regime ({listed}); "
+                f"checkpoint {name} was trained under a different regime ({listed}); "
                 "resuming it would put one run's numbers under another run's label"
             )
 
@@ -677,5 +890,6 @@ class GeneratorTrainer:
             stage=str(saved.get("stage", "")),
             best_faithfulness=float(saved.get("best_faithfulness", 0.0)),
             history=list(saved.get("history", [])),
+            stage_start_step=int(saved.get("stage_start_step", 0)),
+            resumed_at_steps=[int(s) for s in saved.get("resumed_at_steps", [])],
         )
-        return payload

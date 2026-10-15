@@ -10,7 +10,7 @@ cheap enough to run every time.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -357,6 +357,44 @@ class TestOverfit:
         assert result["passed"] == 1.0, f"overfit check failed: {result}"
         assert result["final_loss"] < result["initial_loss"]
 
+    def test_micro_batched_check_memorises_the_same_examples(self, builder, records) -> None:
+        """Accumulating over passes of two is the same check on a card that cannot hold twenty."""
+        generator = _generator(freeze_encoder=False)
+        graphs = {r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(records)}
+        dataset = GeneratorDataset(records, builder=builder, graphs=graphs)
+        result = overfit_check(
+            generator,
+            dataset,
+            GraphCollator(pad_token_id=0),
+            n_examples=20,
+            n_steps=100,
+            lr=3e-3,
+            fusion_lr=3e-3,
+            threshold=0.15,
+            micro_batch_size=2,
+        )
+        assert result["passed"] == 1.0, f"micro-batched overfit check failed: {result}"
+        assert result["final_loss"] < result["initial_loss"]
+
+    def test_the_check_leaves_the_generator_as_it_found_it(self, builder, records) -> None:
+        """The run it gates must start from the initialisation, not from twenty memorised cases."""
+        generator = _generator(freeze_encoder=False)
+        graphs = {r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(records)}
+        dataset = GeneratorDataset(records, builder=builder, graphs=graphs)
+        before = {n: p.detach().clone() for n, p in generator.named_parameters()}
+        result = overfit_check(
+            generator, dataset, GraphCollator(pad_token_id=0), n_steps=30, lr=3e-3, fusion_lr=3e-3
+        )
+        assert result["final_loss"] < result["initial_loss"], "the check did not train at all"
+        for name, param in generator.named_parameters():
+            assert torch.equal(param, before[name]), f"{name} was left modified by the check"
+
+    def test_micro_batch_size_below_one_is_refused(self, builder, records) -> None:
+        """A size of zero would loop forever building empty passes."""
+        dataset = GeneratorDataset(records, builder=builder)
+        with pytest.raises(ValueError, match="micro_batch_size"):
+            overfit_check(_generator(), dataset, GraphCollator(pad_token_id=0), micro_batch_size=0)
+
     def test_trainer_refuses_to_start_without_it(self, builder, records) -> None:
         """A full run cannot begin until the overfit check has passed."""
         generator = _generator()
@@ -478,6 +516,186 @@ class TestCheckpointRoundTrip:
         generator = _generator()
         with pytest.raises(ValueError, match="disagree about whether"):
             generator.load_state_for_checkpoint({"fusion_state": None, "encoder_state": None})
+
+
+class TestControlMatchesTreatment:
+    """A1 may differ from S1 in which graph a narrative is paired with, and in nothing else."""
+
+    @staticmethod
+    def _pair(embedding_scale: float):
+        """Build an S1 and an A1 generator over a backbone with a given embedding scale."""
+        from g2t_aml.models.fusion import ShuffledGraphFusion
+
+        built = []
+        for shuffled in (False, True):
+            torch.manual_seed(7)
+            lm = StubCausalLM(hidden_size=64, vocab_size=512)
+            with torch.no_grad():
+                lm.get_input_embeddings().weight.mul_(embedding_scale)
+            fusion = PrefixFusion(graph_dim=16, lm_dim=64, num_prefix_tokens=4, gated=False)
+            built.append(
+                (
+                    Graph2TextGenerator(
+                        language_model=lm,
+                        fusion=ShuffledGraphFusion(fusion, seed=1) if shuffled else fusion,
+                        encoder=_PooledEncoder(),
+                        config=GeneratorConfig(max_seq_len=128),
+                    ),
+                    fusion,
+                )
+            )
+        return built
+
+    def test_the_control_is_given_the_treatment_arms_soft_token_scale(self) -> None:
+        """Llama's embedding RMS is ~0.02, not ~1: an unscaled control is a different arm.
+
+        The stub's embeddings are near unit scale, where a projector that was never scaled
+        is indistinguishable from one that was. That is how A1 reached the real model with
+        soft tokens tens of times larger than S1's (D-111).
+        """
+        (_, treatment), (_, control) = self._pair(embedding_scale=0.02)
+        assert treatment.target_rms is not None and treatment.target_rms < 0.05
+        assert control.target_rms == pytest.approx(treatment.target_rms)
+
+    def test_the_two_arms_emit_soft_tokens_of_the_same_size(self) -> None:
+        """Measured on the output, not on the attribute."""
+        (s1, _), (a1, _) = self._pair(embedding_scale=0.02)
+        pooled = torch.randn(4, 4, 16)
+        for generator in (s1, a1):
+            generator.eval()  # dropout off: the mean over a batch is then order-independent
+        norms = [
+            float(g.fusion_projector(pooled).token_norms.mean())  # type: ignore[misc]
+            for g in (s1, a1)
+        ]
+        assert norms[1] == pytest.approx(norms[0], rel=1e-4)
+
+    def test_a_control_over_an_unscalable_variant_says_so(self) -> None:
+        """Skipping the scale silently is the failure; refusing is the fix."""
+        from g2t_aml.models.fusion import ShuffledGraphFusion
+
+        class _NoScale(torch.nn.Module):
+            n_tokens = 4
+
+        with pytest.raises(TypeError, match="set_target_rms"):
+            ShuffledGraphFusion(_NoScale(), seed=1).set_target_rms(0.02)
+
+
+class TestResume:
+    """An interrupted run that is continued must be the run that was interrupted."""
+
+    _CONFIG = TrainingConfig(
+        epochs=1,
+        per_device_batch_size=1,
+        gradient_accumulation=2,
+        save_every=None,
+        resume_every=3,
+        require_overfit_check=True,
+    )
+    _PASSED: ClassVar[dict[str, float]] = {"passed": 1.0, "initial_loss": 2.0, "final_loss": 0.01}
+
+    @staticmethod
+    def _dataset(builder, records) -> GeneratorDataset:
+        chosen = records[:16]
+        graphs = {r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(chosen)}
+        return GeneratorDataset(chosen, builder=builder, graphs=graphs)
+
+    def _trainer(self, run_dir, *, arm: str = "S1", config: TrainingConfig | None = None):
+        torch.manual_seed(1234)
+        return GeneratorTrainer(
+            _generator(freeze_encoder=False),
+            config=config or self._CONFIG,
+            collator=GraphCollator(pad_token_id=0),
+            run_dir=run_dir,
+            arm=arm,
+        )
+
+    def _interrupted_at_step_3(self, tmp_path, builder, records):
+        """Train to completion, keeping the resume file as it stood after step 3."""
+        trainer = self._trainer(tmp_path / "whole")
+        kept = tmp_path / "S1_resume_step3.pt"
+        write = trainer.save_resume_state
+
+        def _keep_step_3():
+            path = write()
+            if trainer.state.step == 3:
+                kept.write_bytes(path.read_bytes())
+            return path
+
+        trainer.save_resume_state = _keep_step_3  # type: ignore[method-assign]
+        state = trainer.train(
+            [("only", self._dataset(builder, records))], overfit_result=self._PASSED
+        )
+        return trainer, state, kept
+
+    def test_a_resumed_run_ends_where_the_uninterrupted_one_does(
+        self, tmp_path, builder, records
+    ) -> None:
+        """Same weights, bit for bit, as the run that was never stopped."""
+        whole, whole_state, kept = self._interrupted_at_step_3(tmp_path, builder, records)
+        assert whole_state.step == 8 and kept.is_file()
+
+        resumed = self._trainer(tmp_path / "resumed")
+        state = resumed.train([("only", self._dataset(builder, records))], resume_from=kept)
+
+        assert state.step == whole_state.step
+        assert state.resumed_at_steps == [3]
+        expected = dict(whole.generator.named_parameters())
+        for name, param in resumed.generator.named_parameters():
+            if param.requires_grad:
+                assert torch.equal(param, expected[name]), f"{name} diverged after the resume"
+
+    def test_restarting_from_a_checkpoint_instead_is_refused(
+        self, tmp_path, builder, records
+    ) -> None:
+        """A checkpoint has no optimiser state; training on from it is a different run."""
+        trainer = self._trainer(tmp_path / "a")
+        path = trainer.save_checkpoint(tag="step_3")
+        fresh = self._trainer(tmp_path / "b")
+        with pytest.raises(ValueError, match="not a resume file"):
+            fresh.train(
+                [("only", self._dataset(builder, records))],
+                overfit_result=self._PASSED,
+                resume_from=path,
+            )
+
+    def test_another_arms_resume_file_is_refused(self, tmp_path, builder, records) -> None:
+        """S1's half-trained weights must never be finished off under A1's name."""
+        _, _, kept = self._interrupted_at_step_3(tmp_path, builder, records)
+        control = self._trainer(tmp_path / "a1", arm="A1")
+        with pytest.raises(ValueError, match="belongs to arm"):
+            control.train([("only", self._dataset(builder, records))], resume_from=kept)
+
+    def test_a_changed_regime_is_refused(self, tmp_path, builder, records) -> None:
+        """Everything but the write cadence has to match the run being continued."""
+        from dataclasses import replace
+
+        _, _, kept = self._interrupted_at_step_3(tmp_path, builder, records)
+        for changed in (
+            replace(self._CONFIG, gradient_accumulation=4),
+            replace(self._CONFIG, seed=7),
+            replace(self._CONFIG, fusion_lr=2e-4),
+        ):
+            other = self._trainer(tmp_path / "other", config=changed)
+            with pytest.raises(ValueError, match="different regime"):
+                other.train([("only", self._dataset(builder, records))], resume_from=kept)
+        cadence = self._trainer(tmp_path / "cadence", config=replace(self._CONFIG, resume_every=1))
+        assert (
+            cadence.train([("only", self._dataset(builder, records))], resume_from=kept).step == 8
+        )
+
+    def test_a_resume_cannot_bypass_a_failed_overfit_check(
+        self, tmp_path, builder, records
+    ) -> None:
+        """The file carries the result the run was admitted on, and only that result."""
+        _, _, kept = self._interrupted_at_step_3(tmp_path, builder, records)
+        payload = torch.load(kept, weights_only=False)
+        assert payload["overfit_result"]["passed"] == 1.0
+        payload["overfit_result"] = None
+        torch.save(payload, kept)
+        with pytest.raises(RuntimeError, match="overfit check has not passed"):
+            self._trainer(tmp_path / "x").train(
+                [("only", self._dataset(builder, records))], resume_from=kept
+            )
 
 
 class TestCurriculum:
