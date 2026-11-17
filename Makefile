@@ -314,8 +314,12 @@ matrix:  ## [Phase 11] Run the experiment matrix (ALLOW_GPU=1 ALLOW_API=1 SYSTEM
 matrix-cpu:  ## [Phase 11] Run only the arms that need no GPU and no network (B1, B2)
 	uv run python scripts/11_run_matrix.py --systems B1,B2
 
+.PHONY: score-matrix
+score-matrix:  ## [Phase 11] Score every completed matrix run (metrics.json + per_case.jsonl)
+	uv run python scripts/11c_score_matrix.py
+
 .PHONY: aggregate
-aggregate:  ## [Phase 11] Aggregate the matrix: tidy table, CIs, significance, LaTeX, figures
+aggregate: score-matrix  ## [Phase 11] Aggregate the matrix: tidy table, CIs, significance, LaTeX, figures
 	uv run python scripts/11a_aggregate.py
 
 .PHONY: qualitative

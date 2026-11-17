@@ -444,15 +444,18 @@ def run_local_zero_shot(spec: SystemSpec, seed: int, directory: Path) -> dict[st
 
     prompt_hashes = assert_prompts_loadable()
     repo_root, _bronze_path = _paths_for(directory)
+    # Inference only, through the baselines' own prompt rendering (D-117). The Phase 9
+    # entrypoint is not used: its prompt is the fine-tuning prompt, not the baselines'.
     result = _invoke_entrypoint(
         repo_root,
-        "09_train_generator.py",
+        "09c_local_zero_shot.py",
         overrides=[
-            f"experiment={spec.experiment_config}",
-            f"seed={seed}",
-            "generator.use_fusion=false",
-            "training.epochs=0",  # inference only: B6 is the UNTUNED floor
-            f"hydra.run.dir={Path(directory).as_posix()}",
+            "--out-dir",
+            Path(directory).as_posix(),
+            "--seed",
+            str(seed),
+            "--model",
+            str(spec.base_model),
         ],
         system_id=spec.system_id,
     )
@@ -539,25 +542,49 @@ def run_trained_generator(spec: SystemSpec, seed: int, directory: Path) -> dict[
             training fails.
     """
     repo_root, _bronze_path = _paths_for(directory)
+    context = _context_from_run_dir(directory)
     overrides = [
         f"experiment={spec.experiment_config}",
         f"seed={seed}",
         f"training.guard.enabled={str(spec.guard).lower()}",
         f"hydra.run.dir={Path(directory).as_posix()}",
+        # The run-invariant regime the matrix was launched with (11_run_matrix.py
+        # --generator-override). It is in the context, so it is in the config hash.
+        *[str(o) for o in context.get("generator_overrides") or ()],
     ]
 
+    trained_from: Path | None = None
     if not spec.trained:
         # A5 reads S1's checkpoint. The dependency is declared in the registry and the
-        # runner refuses to schedule this arm until S1 has succeeded at every seed, so a
-        # missing checkpoint here means the matrix root moved, not that S1 failed.
+        # runner refuses to schedule this arm until S1 has succeeded at every seed.
         source = next(iter(spec.depends_on), None)
-        checkpoint = _locate_checkpoint(Path(directory).parents[2], source, seed)
-        if checkpoint is None:
+        trained_from = _trained_checkpoint(context, source, seed) or _locate_checkpoint(
+            Path(directory).parents[2], source, seed
+        )
+        if trained_from is None:
             raise ExecutorError(
                 f"{spec.system_id} reuses {source}'s checkpoint at seed {seed} and it "
-                "could not be located under the matrix root"
+                "could not be located"
             )
-        overrides += [f"generator.resume_from={checkpoint.as_posix()}", "training.epochs=0"]
+        overrides += [f"generator.resume_from={trained_from.as_posix()}", "training.epochs=0"]
+    else:
+        here = Path(directory) / f"{spec.system_id}_final.pt"
+        resume = Path(directory) / f"{spec.system_id}_resume.pt"
+        trained_from = (
+            here if here.is_file() else _trained_checkpoint(context, spec.system_id, seed)
+        )
+        if trained_from is not None:
+            # Trained already -- here by an earlier attempt, or by the training queue
+            # (D-114): decode only. Training it again would spend a GPU-day to reproduce
+            # weights that exist.
+            overrides.append(f"generator.resume_from={trained_from.as_posix()}")
+        elif resume.is_file():
+            overrides.append(f"training.resume_from={resume.as_posix()}")
+        elif context.get("require_trained"):
+            raise ExecutorError(
+                f"{spec.system_id} seed {seed} has no trained checkpoint under "
+                f"{context.get('trained_root')} yet; this matrix run decodes only"
+            )
 
     _invoke_entrypoint(
         repo_root, "09_train_generator.py", overrides=overrides, system_id=spec.system_id
@@ -568,16 +595,45 @@ def run_trained_generator(spec: SystemSpec, seed: int, directory: Path) -> dict[
         raise ExecutorError(
             f"{spec.system_id} trained but wrote no {GENERATIONS_FILE} in {directory}"
         )
-    checkpoint_dir = Path(directory) / "checkpoint"
     return {
-        "checkpoint": str(checkpoint_dir) if checkpoint_dir.exists() else None,
+        "checkpoint": str(trained_from) if trained_from is not None else None,
         "generations": str(generations),
         "n_cases": sum(1 for _ in read_jsonl(generations)),
         "guard": spec.guard,
         "trained": spec.trained,
+        "trained_from": str(trained_from) if trained_from is not None else None,
         "model": spec.base_model,
         "executor": str(spec.executor),
     }
+
+
+def _trained_checkpoint(
+    context: Mapping[str, Any], system_id: str | None, seed: int
+) -> Path | None:
+    """Find an arm's final checkpoint written by the training queue.
+
+    The training queue trains each (arm, seed) under
+    ``<trained_root>/<ARM>_seed<SEED>/<stamp>/`` and drops a ``TRAINED`` marker beside
+    ``<ARM>_final.pt`` when the run finished (D-114).
+
+    Args:
+        context: The run context; ``trained_root`` names the queue's root.
+        system_id: The arm.
+        seed: The seed.
+
+    Returns:
+        The newest finished ``<ARM>_final.pt``, or None.
+    """
+    root = context.get("trained_root")
+    if not root or not system_id:
+        return None
+    base = Path(str(root)) / f"{system_id}_seed{seed}"
+    finished = [
+        d / f"{system_id}_final.pt"
+        for d in (base.iterdir() if base.is_dir() else [])
+        if (d / "TRAINED").is_file() and (d / f"{system_id}_final.pt").is_file()
+    ]
+    return max(finished, key=lambda p: p.stat().st_mtime) if finished else None
 
 
 def _locate_checkpoint(matrix_root: Path, system_id: str | None, seed: int) -> Path | None:
@@ -599,9 +655,9 @@ def _locate_checkpoint(matrix_root: Path, system_id: str | None, seed: int) -> P
         return None
     completed = [d for d in sorted(seed_dir.iterdir()) if (d / "COMPLETED.json").is_file()]
     for candidate in reversed(completed):
-        checkpoint = candidate / "checkpoint"
-        if checkpoint.is_dir():
-            return checkpoint
+        for checkpoint in (candidate / f"{system_id}_final.pt", candidate / "checkpoint"):
+            if checkpoint.exists():
+                return checkpoint
     return None
 
 

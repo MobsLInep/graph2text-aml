@@ -54,6 +54,8 @@ from g2t_aml.models.generator.dataset import (
     build_curriculum,
     load_curriculum_records,
 )
+from g2t_aml.models.generator.guard import GuardWeights
+from g2t_aml.models.generator.guarded_decode import GuardDecodeConfig, guarded_test_set
 from g2t_aml.models.generator.inference import GenerationConfig, run_test_set
 from g2t_aml.models.generator.model import (
     GeneratorConfig,
@@ -231,6 +233,41 @@ def _probe_cases(
     return cases
 
 
+def _encoder_and_fusion(cfg: DictConfig, log: Any) -> tuple[Any, Any]:
+    """Load the Phase 7 encoder checkpoint and build the fusion layer for a graph arm.
+
+    Every generator seed reads the encoder trained at ``generator.encoder_seed`` (D-116):
+    Phase 7 trained at 42/43/44 and the central-claim seeds are 42/1337/2024, so "the
+    encoder at the generator's seed" exists only for 42.
+
+    Args:
+        cfg: The composed config.
+        log: The logger.
+
+    Returns:
+        ``(encoder, fusion)``.
+
+    Raises:
+        FileNotFoundError: If the encoder checkpoint does not exist.
+    """
+    processed = Path(cfg.paths.processed_dir) / str(cfg.data.interim_name)
+    space = load_feature_space(processed / "encoder" / "features")
+    encoder = build_encoder(cfg.encoder, space)
+    encoder_seed = int(cfg.generator.get("encoder_seed", cfg.seed))
+    checkpoint = (
+        Path(cfg.paths.checkpoints_dir)
+        / "encoder"
+        / str(cfg.encoder.arch)
+        / f"{cfg.encoder.arch}_seed{encoder_seed}.pt"
+    )
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"no encoder checkpoint at {checkpoint}")
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    encoder.load_state_dict(payload["state_dict"])
+    log.info("loaded encoder %s (val AUC-PR %.4f)", checkpoint.name, payload["best_val_auc_pr"])
+    return encoder, build_fusion(cfg.fusion, graph_dim=encoder.hidden_dim)
+
+
 @hydra.main(version_base="1.3", config_path=CONFIG_DIR, config_name="config")
 def _run(cfg: DictConfig) -> None:
     """Train one generator arm.
@@ -266,25 +303,9 @@ def _run(cfg: DictConfig) -> None:
         stages_spec = build_curriculum(cfg.training.get("curriculum"))
 
     with stage("building the model", log):
-        encoder = None
-        fusion = None
-        if generator_cfg.use_fusion:
-            processed = Path(cfg.paths.processed_dir) / str(cfg.data.interim_name)
-            space = load_feature_space(processed / "encoder" / "features")
-            encoder = build_encoder(cfg.encoder, space)
-            checkpoint = (
-                Path(cfg.paths.checkpoints_dir)
-                / "encoder"
-                / str(cfg.encoder.arch)
-                / f"{cfg.encoder.arch}_seed{int(cfg.seed)}.pt"
-            )
-            payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            encoder.load_state_dict(payload["state_dict"])
-            log.info(
-                "loaded encoder %s (val AUC-PR %.4f)", checkpoint.name, payload["best_val_auc_pr"]
-            )
-            fusion = build_fusion(cfg.fusion, graph_dim=encoder.hidden_dim)
-
+        encoder, fusion = (
+            _encoder_and_fusion(cfg, log) if generator_cfg.use_fusion else (None, None)
+        )
         generator, tokenizer = build_generator(generator_cfg, fusion=fusion, encoder=encoder)
         # The assertion the brief asks for, at the moment it can still catch something.
         if generator.fusion_projector is not None:
@@ -329,6 +350,11 @@ def _run(cfg: DictConfig) -> None:
         if not trained:
             _EXIT_CODE.append(1)
             return
+
+    if not bool(cfg.generator.generate.get("decode_test", True)):
+        log.info("generator.generate.decode_test=false: trained, not decoded")
+        _EXIT_CODE.append(0)
+        return
 
     with stage("decoding the test set", log) as summary:
         summary["n_cases"] = _decode_test_set(
@@ -434,6 +460,8 @@ def _train_arm(
                 n_examples=20,
                 n_steps=100,
                 micro_batch_size=training_cfg.per_device_batch_size,
+                max_grad_norm=training_cfg.max_grad_norm,
+                encoder_lr=training_cfg.encoder_lr,
                 device=device,
                 log=log,
             )
@@ -540,6 +568,74 @@ def _load_weights(generator: Any, checkpoint: Path, log: Any) -> None:
     )
 
 
+def _guarded_rows(
+    cfg: DictConfig,
+    generator: Any,
+    records: list[dict[str, Any]],
+    items: list[Any],
+    *,
+    builder: PromptBuilder,
+    collator: GraphCollator,
+    tokenizer: Any,
+    run_dir: Path,
+    device: str,
+    log: Any,
+) -> list[dict[str, Any]]:
+    """Decode through the inference guard and record what it did.
+
+    Args:
+        cfg: The composed config; ``training.guard`` and ``generator.generate`` are read.
+        generator: The trained generator.
+        records: The test records, in decode order.
+        items: Their ``(prompt, graph)`` pairs.
+        builder: The prompt builder.
+        collator: The collator.
+        tokenizer: The tokeniser.
+        run_dir: The run directory; the guard's per-pass files and statistics go here.
+        device: The device to decode on.
+        log: The logger.
+
+    Returns:
+        One row per case.
+    """
+    guard = cfg.training.guard
+    decode = cfg.generator.generate
+    vocabulary = load_vocabulary()
+    by_id = {str(r["case_id"]): r for r in records}
+
+    def case_inputs(case_id: str) -> tuple[Any, Any]:
+        facts = facts_from_dict(dict(by_id[case_id]["facts"]))
+        bronze = render_bronze(facts, vocabulary=vocabulary)
+        return facts, SlotAlignmentExtractor(bronze, vocabulary=vocabulary)
+
+    config = GuardDecodeConfig(
+        n_candidates=int(guard.n_candidates),
+        temperature=float(guard.temperature),
+        top_p=float(guard.top_p),
+        weights=GuardWeights(**{str(k): float(v) for k, v in guard.weights.items()}),
+        allow_regeneration=bool(guard.allow_regeneration),
+        max_new_tokens=int(decode.max_new_tokens),
+        batch_size=int(decode.get("guard_batch_size") or 2),
+        seed=int(cfg.seed),
+    )
+    rows, stats = guarded_test_set(
+        generator,
+        records,
+        items,
+        builder=builder,
+        collator=collator,
+        tokenizer=tokenizer,
+        config=config,
+        case_inputs=case_inputs,
+        run_dir=run_dir,
+        device=device,
+        log=log,
+    )
+    write_json(run_dir / "guard_statistics.json", stats.to_dict())
+    log.info("guard: %s", stats.to_dict())
+    return rows
+
+
 def _decode_test_set(
     cfg: DictConfig,
     generator: Any,
@@ -554,11 +650,13 @@ def _decode_test_set(
     device: str,
     log: Any,
 ) -> int:
-    """Greedily decode the test split into ``generations.jsonl`` in the run directory.
+    """Decode the test split into ``generations.jsonl`` in the run directory.
 
     The file is the one every Phase 11 executor writes and ``scripts/10_evaluate.py``
-    scores. Decoding is greedy and **unguarded**: the inference guard is a separate table
-    row (D-073) and is not applied here, and every row says so.
+    scores. Decoding is greedy and unguarded unless ``training.guard.enabled``, in which
+    case every case goes through the inference guard (``models/generator/guarded_decode``).
+    Every row records which (``guard``), and the guarded and unguarded results are
+    separate table rows (D-073, D-116).
 
     Args:
         cfg: The composed Hydra config.
@@ -593,28 +691,41 @@ def _decode_test_set(
     if limit:
         records = records[: int(limit)]
         log.warning("decoding the first %d test cases by case id, not the whole split", limit)
-    if cfg.training.guard.enabled:
-        log.warning("the inference guard is not applied by this entrypoint; decoding unguarded")
-
     dataset = GeneratorDataset(records, builder=builder, graphs=graphs, for_training=False)
+    items = [dataset[i] for i in range(len(dataset))]
     out = run_dir / "generations.jsonl"
     if torch.cuda.is_available():
         # Training leaves the allocator holding blocks shaped for a backward pass.
         torch.cuda.empty_cache()
-    run_test_set(
-        generator,
-        [dataset[i] for i in range(len(dataset))],
-        collator=collator,
-        tokenizer=tokenizer,
-        cfg=GenerationConfig.deterministic(max_new_tokens=int(decode.max_new_tokens)),
-        output_path=out,
-        batch_size=int(decode.get("batch_size") or 4),
-        device=device,
-        log=log,
-    )
-    rows = [dict(row) for row in read_jsonl(out)]
+    guarded = bool(cfg.training.guard.enabled)
+    if guarded:
+        rows = _guarded_rows(
+            cfg,
+            generator,
+            records,
+            items,
+            builder=builder,
+            collator=collator,
+            tokenizer=tokenizer,
+            run_dir=run_dir,
+            device=device,
+            log=log,
+        )
+    else:
+        run_test_set(
+            generator,
+            items,
+            collator=collator,
+            tokenizer=tokenizer,
+            cfg=GenerationConfig.deterministic(max_new_tokens=int(decode.max_new_tokens)),
+            output_path=out,
+            batch_size=int(decode.get("batch_size") or 4),
+            device=device,
+            log=log,
+        )
+        rows = [dict(row) for row in read_jsonl(out)]
     for row in rows:
-        row.update(system=arm, seed=int(cfg.seed), stream="balanced", split="test", guard=False)
+        row.update(system=arm, seed=int(cfg.seed), stream="balanced", split="test", guard=guarded)
     write_jsonl(out, rows)
     return len(rows)
 

@@ -389,6 +389,74 @@ class TestOverfit:
         for name, param in generator.named_parameters():
             assert torch.equal(param, before[name]), f"{name} was left modified by the check"
 
+    def test_a_clipped_check_still_memorises(self, builder, records) -> None:
+        """Clipping at the run's own norm must not stop the check doing its job (D-118)."""
+        generator = _generator(freeze_encoder=False)
+        graphs = {r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(records)}
+        dataset = GeneratorDataset(records, builder=builder, graphs=graphs)
+        result = overfit_check(
+            generator,
+            dataset,
+            GraphCollator(pad_token_id=0),
+            n_examples=20,
+            n_steps=100,
+            lr=3e-3,
+            fusion_lr=3e-3,
+            threshold=0.15,
+            max_grad_norm=0.3,
+        )
+        assert result["passed"] == 1.0, f"clipped overfit check failed: {result}"
+
+    def test_the_check_stops_once_it_has_memorised(self, builder, records) -> None:
+        """Memorisation answers the question; running on only invites divergence (D-119)."""
+        generator = _generator(freeze_encoder=False)
+        graphs = {r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(records)}
+        dataset = GeneratorDataset(records, builder=builder, graphs=graphs)
+        result = overfit_check(
+            generator,
+            dataset,
+            GraphCollator(pad_token_id=0),
+            n_examples=20,
+            n_steps=400,
+            lr=3e-3,
+            fusion_lr=3e-3,
+            threshold=0.15,
+        )
+        assert result["passed"] == 1.0
+        assert result["steps_taken"] < 400
+        assert result["final_loss"] < 0.15
+
+    def test_the_check_trains_the_encoder_at_the_rate_it_is_given(self, builder, records) -> None:
+        """A4's unfrozen encoder must move at the run's 1e-5, not the projector's 1e-3."""
+        generator = _generator(freeze_encoder=False)
+        dataset = GeneratorDataset(
+            records,
+            builder=builder,
+            graphs={r["case_id"]: _graph(3 + (i % 5)) for i, r in enumerate(records)},
+        )
+        seen: list[dict[str, float]] = []
+        original = torch.optim.AdamW
+
+        class _Spy(original):  # type: ignore[misc,valid-type]
+            def __init__(self, groups, *args, **kwargs):
+                seen.extend({"name": g.get("name"), "lr": g["lr"]} for g in groups)
+                super().__init__(groups, *args, **kwargs)
+
+        torch.optim.AdamW = _Spy  # type: ignore[misc]
+        try:
+            overfit_check(
+                generator,
+                dataset,
+                GraphCollator(pad_token_id=0),
+                n_steps=1,
+                lr=3e-3,
+                fusion_lr=3e-3,
+                encoder_lr=1e-5,
+            )
+        finally:
+            torch.optim.AdamW = original  # type: ignore[misc]
+        assert {g["name"]: g["lr"] for g in seen}.get("encoder") == 1e-5
+
     def test_micro_batch_size_below_one_is_refused(self, builder, records) -> None:
         """A size of zero would loop forever building empty passes."""
         dataset = GeneratorDataset(records, builder=builder)

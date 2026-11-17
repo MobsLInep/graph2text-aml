@@ -255,21 +255,27 @@ case and for different missing inputs.
   reserved, the interface runs, and the ingestion path is verified end to end on real
   cases with hand-written narratives; **not one Gold narrative exists**. See PHASE_LOG
   Phase 6. Recruitment is the critical path and no further engineering advances it.
-- **No generator arm has been trained, and Gate 8 is OPEN.** The Phase 8 fusion layer, the
-  Phase 9 harness and the guard are built and tested on CPU against a stub backbone (119
-  tests). **This machine has a 4 GB RTX 2050 and 7 GB of system RAM.** Llama-3.1-8B at nf4
-  is ~4.5–5.6 GB of weights alone — more than the card holds before a single activation —
-  and CPU offload is closed by the RAM. This is not the `max_seq_len` fallback the Phase 9
-  brief describes; that assumes a 24 GB card. **Do not attempt `make train-s1` here.** See
-  PHASE_LOG Phase 8+9 and D-068. Nothing is known about whether the model reads a soft
-  token; every number in that entry measures the harness, not the method.
-- **The Phase 11 matrix is declared, orchestrated and tested, and not one system has run.**
-  17 systems, 25 runs, every one documented as a non-run with its blocker in `RESULTS.md`
-  §2. `make matrix-plan` prints the plan without touching anything. **B1 and B2 need no GPU
-  and no network and are runnable today** — the cheapest way to put two real rows in the
-  results table and exercise the whole run→aggregate→figure path on real data.
-  **Do not run the full matrix before S1 and A1 have answered Gate 8**: if the fusion layer
-  is decoration, the other twenty-three runs answer a question the paper will not be asking.
+- **The Gate 8 pilot is answered: indistinguishable (seed 42).** S1 and A1 trained on a
+  16 GB RTX A4000 (WSL2; native Windows cannot run the pipeline) at batch 1 x accumulation
+  32, Bronze only, one epoch (D-104, D-105). The trained model gives its soft tokens ~1/20 of
+  uniform attention, never moves its gate (0.62), produces the same narrative with a foreign
+  graph, and is indistinguishable from A1 (probe supported 0.99487 vs 0.99490). On the test
+  split S1 scores ZHR 0.979 and coverage 0.766 against the template's 1.000 and 0.853, and
+  H9 is 0.903 for B1, B2, S1 and A1 on exactly the same cases. The pre-registered
+  consequence holds: **the contribution is the corpus and the evaluation framework.**
+  RESULTS.md §4.9, D-114. Seeds 1337/2024 and the rest of the GPU matrix are queued
+  (`PROGRESS.md` is the live run state; read it before touching anything GPU-side).
+- **Everything that runs on the GPU goes through WSL and a detached queue.**
+  `/home/user/g2t-run/launch_gpu.sh` (re)starts it and the queue skips finished work; the
+  Windows task `G2T-KeepWSLAlive` must be running or WSL kills the jobs when the SSH session
+  that launched them ends — detaching inside Linux is not enough. Training resumes from the
+  last 10 steps (D-110). Every arm is reported raw (greedy, unguarded); A5 is the one
+  guarded row (D-116). Every generator seed reads the seed-42 encoder (D-116).
+- **The Phase 11 matrix has real rows: B1, B2, S1 and A1 (seed 42).** `make aggregate` now
+  runs `make score-matrix` first: nothing used to write a run's `metrics.json`, so the
+  aggregator found no metrics on the first real runs (D-112). The remaining GPU rows run in
+  the order D-114 sets: B7 and S2 (the rows the pivoted paper needs), then the Gate 8
+  seeds, then the ablations. A6 cannot load Qwen3 under the pinned transformers (D-115).
 - **Phase 12's study is built and blocked, and its first blocker is paperwork.** The design,
   the blinded interface, the analysis and the anonymised release are complete and tested
   against simulated responses (101 tests). **Ethics approval has not been applied for** —
@@ -602,13 +608,12 @@ findings and the Phase 3 gate results, and `DECISIONS.md` D-010…D-102.
 
 ## 10. What the next session should do
 
-Unchanged in priority order from `RESULTS.md` §8 — **the release does not advance any of
-it**, and that is the honest reading of where this project stands:
-
-1. `make score-cases`, then **B1 and B2**. CPU-only, runnable today, two real rows.
-2. **Credentials** → B3/B4/B5, then Silver, then the Method A/B κ.
-3. **A rented ≥24 GB GPU** → S1 and A1 at three seeds, then `make gate8`. Everything else
-   in the matrix is read against that comparison.
+1. **Read `PROGRESS.md` and run its status commands.** The GPU queue may be mid-run; it is
+   the source of truth for what is running, what finished and what failed.
+2. When the queue finishes: `make aggregate`, then update `RESULTS.md` §4.9 and the Gate 8
+   verdict at three seeds.
+3. **Credentials** → B3/B4/B5, then Silver, then the Method A/B κ. Spending needs the
+   user's explicit go-ahead.
 4. **An annotator.** Nothing else unblocks Gold.
 
 Two Phase 14 leftovers, neither of which is a code action: **mint the Zenodo DOI** (link

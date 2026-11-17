@@ -3350,3 +3350,227 @@ of its tests fail with the fix reverted.
 within-run shuffled control (`callbacks.py`) builds `ShuffledGraphFusion` around S1's
 already-scaled projector, so the probe rows in `history_S1.jsonl` were computed at the
 right scale.
+
+---
+
+## D-112
+
+**Every completed matrix run is scored into `metrics.json` and `per_case.jsonl` by
+`scripts/11c_score_matrix.py`, and `make aggregate` runs it first.**
+
+*Phase 11, 2026-10-15.*
+
+The runner writes a run's `generations.jsonl` and `COMPLETED.json`; the aggregator reads a
+run's `metrics.json` and `per_case.jsonl`. **No code wrote the second pair.** The
+aggregation and figure tests wrote them by hand, so every test passed, and the first time
+real runs existed (B1 and B2, 2026-10-11) `make aggregate` reported `NO SYSTEM produced
+metrics` and wrote empty tables.
+
+The new step calls the Phase 10 `evaluate` exactly as `scripts/10_evaluate.py` does - same
+fact records, same Bronze slot index for Method A, same vocabulary, one system per call -
+and reads the corpus through `10_evaluate.py`'s own `_load_corpus` rather than a copy.
+`metrics.json` is `EvaluationReport.to_dict()` verbatim. `per_case.jsonl` carries each
+narrative's value of every main-table metric under the aggregator's names, with the binary
+headline stored as 0/1 so that its mean is the Zero-Hallucination Rate. A scored run is not
+re-scored without `--force`. Nothing in `eval/` changed.
+`tests/integration/test_score_matrix.py` shows the aggregator reporting the run missing
+before the step and collecting it after.
+
+---
+
+## D-113
+
+**The graph transformer now beats GATv2 at every seed. GATv2 stays the encoder the
+generator arms use, and the paper reports the reversal.**
+
+*Phase 7 replication, 2026-10-05 sweep; recorded 2026-10-15.*
+
+D-064 kept GATv2 primary because neither GIN nor the graph transformer beat it with an
+interval excluding zero at every seed, and named exactly that as what would change the
+decision. On this machine's full re-run of the sweep (27 runs, `make train-encoder`,
+2026-10-05) it happened for the graph transformer:
+
+| `gatv2` minus | mean | excludes zero at every seed | published (D-064) |
+|---|---:|---|---|
+| `graph_transformer` | **-0.0384** | **yes** | -0.0157, no |
+| `gin` | -0.0031 | no | -0.0082, no |
+| `mlp` (the gate) | +0.0605 | yes -> PASS | +0.070, PASS |
+
+GATv2 itself reproduced at 0.857 (published 0.872, inside D-100's +/-0.02); the graph
+transformer at 0.896 (published 0.888). Under D-100 a conclusion that flips is a finding,
+not variance, so it is reported as one.
+
+**Why the generator arms do not switch.** (1) Two arms (S1, A1 at seed 42) and the whole
+queued matrix are built on GATv2's tokens; switching mid-matrix would make the rows
+incomparable. (2) The Gate 8 pilot (D-114) shows the language model does not read the
+soft tokens at all, so which encoder produces them is not what limits narrative quality.
+(3) D-064's interpretability reason stands: GATv2's attention is over the real
+transactions, the graph transformer's includes a virtual node. **What the paper must
+say:** GATv2 is not the best classifier of the six - the graph transformer is, and on this
+replication significantly - and the generator uses GATv2 for the reasons above.
+
+---
+
+## D-114
+
+**The Gate 8 pilot answers "indistinguishable". The remaining matrix runs, ordered by
+what the paper now needs.**
+
+*Phase 9/11, 2026-10-15.*
+
+S1 and A1 at seed 42 (Bronze-only, one epoch, D-104/D-105), compared as Gate 8 specifies
+(`scripts/09b_compare_arms.py`, probe supported rate over six aligned steps, tolerance
+0.02): S1 0.99487, A1 0.99490, difference -0.00003 -> **indistinguishable**. Both models
+pay their sixteen soft tokens ~1/20 of uniform attention; neither changes its output when
+the graph is swapped (S1's within-run shuffled control tracked it from step 150); the
+fusion gate never moved from its initial 0.62. On the 3,192-case test split the paired
+differences are mixed in sign and negligible in size (A1 - S1: Zero-Hallucination -0.0075,
+coverage +0.0114; every |Cliff's delta| <= 0.04).
+
+CLAUDE.md asks for S1 and A1 at three seeds before Gate 8 counts as answered, and the
+pre-registered consequence of "indistinguishable" is that the paper's contribution is the
+corpus and the evaluation framework. Both stand: the remaining seeds are queued, and the
+matrix is ordered so that the rows the pivoted paper needs come first -
+
+1. **B7** (QLoRA on serialised facts, no graph): whether the graph pathway adds anything at
+   all over a text-only fine-tune of the same model;
+2. **S2** (graph only, no serialised facts): whether the soft tokens can carry case facts
+   when the text cannot;
+3. **S1, A1 at seeds 43 and 44**: Gate 8 as specified;
+4. the remaining B7/S2 seeds, then B8, A2, A4, A3_F3, A3_F4.
+
+**Train first, decode afterwards** (`generator.generate.decode_test=false`): every arm is
+trained under the pilot's regime, and the test decodes run afterwards under one decoding
+policy, so a decoding decision taken later - batch size, the guard - cannot leave two arms
+decoded differently.
+
+---
+
+## D-115
+
+**A6 (second base model) cannot run Qwen3-8B in this environment. Proposed substitute:
+Qwen2.5-7B-Instruct. Not queued until the user agrees.**
+
+*Phase 11, 2026-10-15.*
+
+`uv.lock` pins `transformers==4.45.2`, which does not recognise the `qwen3` architecture
+(`AutoConfig.from_pretrained("Qwen/Qwen3-8B")` raises). Upgrading transformers changes the
+library under every other arm mid-matrix. Qwen2.5-7B-Instruct is supported by the pinned
+version, already in the local cache, and is a different model family from Llama - which is
+what A6 exists to test. The registry still names Qwen3-8B; it changes only with the user's
+agreement, and the row will carry the substitution.
+
+---
+
+## D-116
+
+**Every trained arm is reported raw; A5 is the one guarded row. Every generator seed reads
+the seed-42 encoder.**
+
+*Phase 9/11, 2026-10-15.*
+
+**The guard.** The registry made every trained arm a guarded row (`guard: bool = True`)
+and A5 "S1 with the guard off". Two things were wrong with that once the matrix had to
+run. (1) D-073 calls the raw model's faithfulness the scientific claim and the guarded
+number the application claim; with every arm guarded, every main-table comparison -
+Gate 8, S1 vs B7, S2 - would be between systems whose output a verifier built on the
+evaluation's own checker had already filtered, compressing exactly the differences the
+table exists to show. (2) On a 16 GB card a guarded decode (four sampled candidates,
+verification, repair) costs ~1.5x a greedy one; every arm guarded is ~4 extra GPU-days.
+
+So the default flips: `SystemSpec.guard` defaults to False, `training.guard.enabled`
+defaults to false, and **A5 is S1's checkpoint decoded WITH the guard** - "labelled by
+what it varies", as A4 already is. A5 minus S1 is what the guard buys; every other
+comparison is raw against raw. Nothing is lost: every arm keeps its final checkpoint, so a
+guarded decode of any arm can be added later without retraining. The guard is now wired
+into decoding (`models/generator/guarded_decode.py`: candidates, repairs, selection - three
+batched, resumable passes), and a case's candidates share one prompt pass whose cache is
+copied (`inference._repeat_cache`); greedy and multi-candidate decoding still match HF
+`generate` exactly on Llama-3.2-1B.
+
+**The encoder seed.** `SEEDS_CENTRAL` is (42, 1337, 2024) (D-081); Phase 7 trained the
+encoders at 42/43/44. The entrypoint read `<arch>_seed<generator seed>.pt`, which exists
+only at 42 - S1 at seed 1337 would have crashed at model build. Every generator seed now
+reads the encoder named by `generator.encoder_seed` (42): the encoder whose scores are in
+the fact records, and the spread across generator seeds then measures generator training
+alone. Caught before any run reached those seeds; the first training queue had them as
+43/44, which was also wrong, and was replaced.
+
+---
+
+## D-117
+
+**B6 runs the baselines' own prompt on the local base model, through its own script.**
+
+*Phase 11, 2026-10-15.*
+
+`run_local_zero_shot` invoked `09_train_generator.py` with `training.epochs=0`. That
+entrypoint builds the fine-tuning prompt, not `prompts/baseline_generate_v1.txt`, and with
+no `resume_from` it would have run the 4-hour overfit check and then trained for zero
+epochs - B6 would have been "B7's prompt on an untrained model", not "B3's prompt on the
+local model". `scripts/09c_local_zero_shot.py` renders each case's prompt through
+`experiments.baselines.generate_zero_shot` itself (a teacher that records the rendered
+prompt instead of calling anything), so B6's prompt is byte-for-byte B3's, then generates
+greedily with Llama-3.1-8B-Instruct in 4-bit through its chat template. Resumable.
+
+---
+
+## D-118
+
+**The overfit check clips gradients at the run's own norm; the GPU queue moves on past a
+failed arm; the seed-42 pilot is imported into the matrix rather than re-decoded.**
+
+*Phase 9/11, 2026-10-28.*
+
+**S2's check failed on optimisation, not wiring.** Graph-only S2 started at 3.23 (no fact
+text, so higher than S1's 2.34), memorised to 0.4322 at step 20 and **0.0231 at step 40**,
+then jumped to 16.38 at step 60 and ended at 5.85. The check runs AdamW at 1e-3 - five
+times the run's LoRA rate - with no clipping, while the run itself clips at 0.3.
+`overfit_check(max_grad_norm=...)` now clips, at `training.max_grad_norm`, and logs the
+pre-clip norm. S1, A1 and B7 passed unclipped and are not re-run: the check gates a run and
+restores the weights it touched (D-106), so it leaves nothing in their results.
+
+**Twelve idle days.** The training queue stopped at S2's failure on 2026-10-16 and the GPU
+sat idle until 2026-10-28. `gpu_queue.sh` now marks a failed arm `FAILED`, moves on to the
+next, and retries failures on the next launch.
+
+**The pilot import.** S1 and A1 at seed 42 were trained and decoded by the Gate 8 pilot
+before the matrix layout existed - same entrypoint, same regime, greedy, unguarded, from
+the same checkpoints the matrix would use. Their checkpoints were copied into the training
+root (`artifacts/runs/train/<ARM>_seed42/`, with a `PROVENANCE.json`) and their test
+decodes written into the matrix run directories the decode pass plans, with a
+`COMPLETED.json` whose payload names the source. Re-decoding would cost ~28 GPU-hours to
+reproduce two files.
+
+---
+
+## D-119
+
+**The overfit check stops once it has memorised and trains the encoder at the run's own
+rate; the guard decodes two cases at a time. Written and stub-tested; NOT run — the user
+stopped the matrix on 2026-11-17.**
+
+*Phase 9/11, 2026-11-17.*
+
+D-118's clipping did not hold. Six arms failed the check between 2026-10-31 and 11-06, and
+five had memorised first: A1 seed 1337 (0.0109 at step 40, then a gradient norm of 40.1,
+final 0.257), B7 seed 2024 (0.0067, then 142, final 16.9), B8 (0.071, final 4.71), A3_F3
+(0.018, then 290, final 8.93), A3_F4 (0.0070, then 112, final 4.64). Clipping bounds the
+gradient, not Adam's step: once the loss is near zero the second-moment estimate is tiny
+and a normalised step at 1e-3 - five times the run's LoRA rate - throws the model off. The
+sixth, A4, diverged at step 20 (25.5, gradient norm 504) because the check trained its
+unfrozen encoder at the projector's 1e-3; the run's encoder rate is 1e-5.
+
+The check's question is whether the wiring can memorise twenty examples. Five arms
+answered yes and were failed for what the optimiser did afterwards. So: stop at the first
+step whose loss is under the threshold (`steps_taken` is recorded), and give the encoder
+the rate the run gives it. **What this gives up, stated:** the A1 scale defect (D-111) was
+caught because that check went on to diverge; it had reached 0.126 at step 20 and an
+early-stopping check would have passed it. Its tell was the doubled step-0 loss (4.95
+against 2.34), which `overfit_check.json` records as `initial_loss`; an arm whose step-0
+loss is far from S1's on the same twenty cases must be investigated before its result is
+read.
+
+A5's guarded decode ran out of memory at four cases x four candidates (16 rows) on
+2026-11-09; `generator.generate.guard_batch_size` is now 2 (8 rows, the greedy batch's
+size).

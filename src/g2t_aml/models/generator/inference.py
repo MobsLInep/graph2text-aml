@@ -266,6 +266,74 @@ def _decode_step(
     return logits, getattr(out, "past_key_values", None)
 
 
+def _repeat_cache(cache: Any, times: int) -> Any:
+    """Repeat every row of a key-value cache ``times`` times, row by row.
+
+    Args:
+        cache: The cache a decoder returned: a legacy tuple of per-layer ``(key, value)``
+            tensors, or a ``Cache`` object that can repeat itself.
+        times: How many copies of each row, the candidates per case.
+
+    Returns:
+        The cache with each batch row followed by its copies, in the order
+        ``repeat_interleave`` puts the candidate rows.
+
+    Raises:
+        TypeError: If the cache is of a form this function does not know how to repeat.
+            Guessing would decode each candidate against another case's prompt.
+    """
+    repeat = getattr(cache, "batch_repeat_interleave", None)
+    if callable(repeat):
+        repeat(times)
+        return cache
+    if isinstance(cache, tuple | list):
+        return tuple(
+            tuple(tensor.repeat_interleave(times, dim=0) for tensor in layer) for layer in cache
+        )
+    raise TypeError(f"cannot repeat a key-value cache of type {type(cache).__name__}")
+
+
+def _prompt_inputs(
+    generator: Graph2TextGenerator, batch: GeneratorBatch, *, repeat: int
+) -> tuple[Tensor, Tensor]:
+    """Embed a batch's prompts, left-padded, with the graph spliced in.
+
+    Candidates are produced by repeating each row, so one batched pass covers every
+    candidate of every case rather than looping the model n times. With a key-value cache
+    the caller repeats AFTER the prompt pass instead (``repeat=1`` here): the candidates of
+    one case share a prompt, so its cache is computed once and copied, which divides the
+    prompt pass and its activation peak by the candidate count. Without a cache (the stub)
+    the rows are repeated here, as the whole sequence is re-run every step anyway.
+
+    The collator pads on the right, which is correct for training and wrong here: the next
+    token is read from the final position, and on a right-padded row that position is
+    padding — for any prompt whose length is not a multiple of the collator's
+    ``pad_to_multiple_of``, at batch size one included. So the padding moves to the left.
+
+    Args:
+        generator: The generator.
+        batch: The collated inference batch, already on the decoding device.
+        repeat: Copies of each row.
+
+    Returns:
+        ``(inputs_embeds, attention_mask)``.
+    """
+    row_ids, row_attention, row_soft = _left_pad(
+        batch.input_ids, batch.attention_mask, batch.soft_mask
+    )
+    input_ids = row_ids.repeat_interleave(repeat, dim=0)
+    attention_mask = row_attention.repeat_interleave(repeat, dim=0)
+    soft_mask = row_soft.repeat_interleave(repeat, dim=0)
+
+    inputs_embeds = generator.language_model.get_input_embeddings()(input_ids)
+    if generator.fusion_projector is not None:
+        pooled = generator.encode_graph(batch.graph_batch)
+        soft = generator.fusion_projector(pooled).soft_tokens
+        soft = soft.repeat_interleave(repeat, dim=0)
+        inputs_embeds = generator.splice_soft_tokens(inputs_embeds, soft, soft_mask)
+    return inputs_embeds, attention_mask
+
+
 @torch.no_grad()
 def generate_batch(
     generator: Graph2TextGenerator,
@@ -308,35 +376,18 @@ def generate_batch(
     batch = batch.to(device)
     n_return = cfg.num_return_sequences
 
-    # The collator pads on the right, which is correct for training and wrong here: the
-    # next token is read from the final position, and on a right-padded row that position
-    # is padding — for any prompt whose length is not a multiple of the collator's
-    # `pad_to_multiple_of`, at batch size one included. Decoding needs the prompt to END at
-    # the final position, so the padding moves to the left.
-    row_ids, row_attention, row_soft = _left_pad(
-        batch.input_ids, batch.attention_mask, batch.soft_mask
-    )
-
-    # Candidates are produced by repeating each row, so one batched forward pass covers
-    # every candidate of every case rather than looping the model n times.
-    input_ids = row_ids.repeat_interleave(n_return, dim=0)
-    attention_mask = row_attention.repeat_interleave(n_return, dim=0)
-    soft_mask = row_soft.repeat_interleave(n_return, dim=0)
-
+    split = _decoder_and_head(generator.language_model)
+    expand_after_prompt = n_return > 1 and split is not None
     embed = generator.language_model.get_input_embeddings()
-    inputs_embeds = embed(input_ids)
-
-    if generator.fusion_projector is not None:
-        pooled = generator.encode_graph(batch.graph_batch)
-        soft = generator.fusion_projector(pooled).soft_tokens
-        soft = soft.repeat_interleave(n_return, dim=0)
-        inputs_embeds = generator.splice_soft_tokens(inputs_embeds, soft, soft_mask)
+    inputs_embeds, attention_mask = _prompt_inputs(
+        generator, batch, repeat=1 if expand_after_prompt else n_return
+    )
 
     rng = torch.Generator(device="cpu")
     rng.manual_seed(cfg.seed)
 
     eos = getattr(tokenizer, "eos_token_id", None)
-    n_rows = inputs_embeds.size(0)
+    n_rows = inputs_embeds.size(0) * (n_return if expand_after_prompt else 1)
     produced: list[list[int]] = [[] for _ in range(n_rows)]
     finished = torch.zeros(n_rows, dtype=torch.bool)
 
@@ -345,12 +396,15 @@ def generate_batch(
     # backbone that returns no cache (the CPU stub) keeps the full-sequence path.
     step_inputs = inputs_embeds
     past: Any = None
-    split = _decoder_and_head(generator.language_model)
 
-    for _ in range(cfg.max_new_tokens):
+    for step in range(cfg.max_new_tokens):
         final_logits, cache = _decode_step(
             generator.language_model, split, step_inputs, attention_mask, past
         )
+        if step == 0 and expand_after_prompt:
+            final_logits = final_logits.repeat_interleave(n_return, dim=0)
+            cache = _repeat_cache(cache, n_return)
+            attention_mask = attention_mask.repeat_interleave(n_return, dim=0)
         next_ids = _sample_next(final_logits.float().cpu(), cfg, rng)
 
         for row in range(n_rows):

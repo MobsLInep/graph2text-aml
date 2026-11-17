@@ -72,7 +72,8 @@ curriculum:
 
 # --- The inference guard. Weights are a judgement call, recorded in DECISIONS.md. ---
 guard:
-  enabled: true
+  # Off for every trained arm, which is reported raw; A5 turns it on (D-116).
+  enabled: false
   n_candidates: 4
   temperature: 0.6
   top_p: 0.9

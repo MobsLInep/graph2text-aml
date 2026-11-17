@@ -306,12 +306,18 @@ def overfit_check(
     n_steps: int = 100,
     lr: float = 1e-3,
     fusion_lr: float = 1e-3,
+    encoder_lr: float | None = None,
     threshold: float = 0.15,
     micro_batch_size: int | None = None,
+    max_grad_norm: float | None = None,
     device: str = "cpu",
     log: Any = None,
 ) -> dict[str, float]:
     """Train on a handful of examples until the loss collapses, or report that it did not.
+
+    It stops at the first step whose loss is below ``threshold``: it asks whether the
+    wiring can memorise, and once it has, more steps at an elevated rate can only diverge
+    (D-119).
 
     This is the cheapest test in the project and the one that pays for itself most often.
     A model that cannot memorise twenty examples in a hundred steps has a wiring bug — the
@@ -331,10 +337,18 @@ def overfit_check(
         lr: LoRA learning rate for the check, higher than the real run's.
         fusion_lr: Fusion learning rate for the check.
         threshold: Final loss below this counts as passed.
+        encoder_lr: Encoder learning rate for the check. None uses ``fusion_lr``. The run
+            passes its own (1e-5): at 1e-3 an unfrozen encoder diverged at step 20 (A4,
+            D-119), which says nothing about wiring.
         micro_batch_size: Rows per forward pass. None runs all ``n_examples`` in one pass,
             which an 8B base needs roughly a 24 GB card for. A smaller value accumulates
             the same full-batch gradient over several passes, each weighted by its share
             of the supervised tokens, so every step is the one the single pass would take.
+        max_grad_norm: Clip the gradient to this norm before each step, as the real run
+            does. None does not clip. Unclipped, S2's check memorised the twenty examples
+            (loss 0.023 at step 40) and then diverged to 16.4 at step 60 -- an optimiser
+            excursion at a learning rate five times the run's, not a wiring fault, failing
+            a check whose purpose is to find wiring faults (D-118).
         device: Device to run on.
         log: Optional logger.
 
@@ -364,7 +378,9 @@ def overfit_check(
     generator.train()
 
     groups = generator.trainable_parameter_groups(
-        lora_lr=lr, fusion_lr=fusion_lr, encoder_lr=fusion_lr
+        lora_lr=lr,
+        fusion_lr=fusion_lr,
+        encoder_lr=fusion_lr if encoder_lr is None else encoder_lr,
     )
     # This is a check, not a warm-up. Without the snapshot the run that follows starts
     # from adapters and a projector already memorised on these examples at a high rate,
@@ -375,6 +391,7 @@ def overfit_check(
 
     initial = float("nan")
     loss_value = float("nan")
+    steps_taken = 0
     for step in range(n_steps):
         optimizer.zero_grad(set_to_none=True)
         loss_value = 0.0
@@ -391,11 +408,23 @@ def overfit_check(
             share = n_tokens / total_supervised
             (out.loss * share).backward()
             loss_value += float(out.loss.detach()) * share
-        optimizer.step()
+        grad_norm = (
+            float(torch.nn.utils.clip_grad_norm_(trained, max_grad_norm))
+            if max_grad_norm is not None
+            else float("nan")
+        )
         if step == 0:
             initial = loss_value
+        steps_taken = step + 1
         if log is not None and step % 20 == 0:
-            log.info("  overfit step %3d  loss %.4f", step, loss_value)
+            log.info("  overfit step %3d  loss %.4f  grad norm %.3g", step, loss_value, grad_norm)
+        # Memorisation is the question, and it has been answered: stop. Running on at a
+        # rate five times the real run's only invites the excursion that failed six
+        # arms after they had memorised (D-119). The loss measured is the forward pass
+        # just taken, before this step's update.
+        if loss_value < threshold:
+            break
+        optimizer.step()
 
     optimizer.zero_grad(set_to_none=True)
     with torch.no_grad():
@@ -405,17 +434,19 @@ def overfit_check(
     passed = loss_value < threshold
     if log is not None:
         log.info(
-            "  overfit check %s: %.4f -> %.4f (threshold %.2f)",
+            "  overfit check %s: %.4f -> %.4f (threshold %.2f) after %d steps",
             "PASSED" if passed else "FAILED",
             initial,
             loss_value,
             threshold,
+            steps_taken,
         )
     return {
         "initial_loss": initial,
         "final_loss": loss_value,
         "threshold": threshold,
         "passed": float(passed),
+        "steps_taken": float(steps_taken),
     }
 
 

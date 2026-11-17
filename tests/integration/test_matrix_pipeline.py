@@ -149,9 +149,10 @@ def test_a1_composes_with_the_shuffle_on_and_s1_with_it_off(compose_experiment):
     assert differing == {"shuffle"}
 
 
-def test_a5_composes_with_the_guard_disabled(compose_experiment):
-    assert compose_experiment("matrix_a5").training.guard.enabled is False
-    assert compose_experiment("generator_s1").training.guard.enabled is True
+def test_a5_composes_with_the_guard_enabled_and_s1_without(compose_experiment):
+    """D-116: S1 is the raw model and A5 is S1 guarded."""
+    assert compose_experiment("matrix_a5").training.guard.enabled is True
+    assert compose_experiment("generator_s1").training.guard.enabled is False
 
 
 def test_a4_composes_with_the_encoder_unfrozen(compose_experiment):

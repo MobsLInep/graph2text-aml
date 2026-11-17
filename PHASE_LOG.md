@@ -2945,3 +2945,89 @@ optimiser bug only because the relock forced a full resync.
 5. **Do not regenerate Bronze to "refresh" the release.** `model_signal` is populated now
    and `facts.serialiser._compact` emits `gnn_risk_score` into `serialised_facts`, which is
    the input to the "no graph encoder" ablation arm. Nothing would fail. D-063.
+
+---
+
+## Phase 9/11 on hardware — the first generator runs, and the Gate 8 pilot (2026-10-05 → 2026-10-15)
+
+The first session on a machine that can load the base model: an RTX A4000 (16 GB, Ampere)
+with 128 GB of RAM, run through WSL2 Ubuntu-24.04 because native Windows cannot run the
+pipeline (`utils/io.py::atomic_path` calls `os.fsync` on a read handle). Live run state is
+in `PROGRESS.md`; this entry is the record.
+
+### Reproduction from raw data
+
+| Stage | Observed | Published |
+|---|---|---|
+| Ingest | 515,088 nodes, 5,078,345 edges | identical |
+| Splits | 10,932 / 2,028 / 3,196, manifest identical but for `created_at` | identical |
+| Bronze | 15,707 records, 296,195 claims, 100% supported | identical |
+| Bronze evaluation | ZHR 1.0000, coverage 0.8595, H9 0.9179, 296,196 claims | identical |
+| Test suite (real data present) | 2,137 passed, 2 skipped (Elliptic2), 1 failed → fixed (hermetic tokenizer test) | — |
+| Encoder sweep, 27 runs | GATv2 0.857, MLP 0.797, gate +0.0605 PASS; graph transformer 0.896 **significantly above GATv2** | GATv2 0.872, MLP 0.80, gate +0.070 PASS; GT "not significant" |
+
+The graph-transformer reversal is a changed conclusion under D-100 and is recorded as
+D-113. The positional-encoding ablation changed sign (−0.005 against +0.002) between two
+non-significant values.
+
+### The generator entrypoint had never been executed
+
+Eight defects, none visible to the 119 stub-backed tests, all fixed and recorded:
+five crashes in `scripts/09_train_generator.py` and no test-set decode at all (D-108); an
+overfit check that needed ~24 GB and left the weights it trained in place (D-106); a
+decoding loop that read the next token from a padding position, kept no KV cache and
+projected every position onto the vocabulary — 0 of 8 outputs matched HF `generate`
+before, 8 of 8 after (D-107); and **the A1 control's projector never received the
+soft-token scale**, so its graph tokens entered the prompt ~100× larger than S1's and A1
+would have differed from S1 in two ways (D-111 — caught by the overfit check, step-0 loss
+4.95 against S1's 2.34). On 16 GB every arm runs at batch 1 × accumulation 32 with `sdpa`
+(D-105), on Bronze alone for one epoch because Silver has no records (D-104). Training
+can now be resumed from the last 10 steps (D-110).
+
+### Infrastructure losses, kept on the record
+
+Two S1 runs were lost (~10 h and ~6.5 h of GPU): the jobs were children of a Claude Code
+session reached over SSH, and WSL shut the distro down when the session ended. Detaching
+inside Linux did not help — the Windows helper that keeps background WSL processes alive
+belongs to the SSH logon. Fixed with a scheduled task that holds the distro from outside
+the session (`G2T-KeepWSLAlive`), verified with a disconnect simulation that reproduced
+the failure when the task was off. Five days passed with the machine idle before the loss
+was found.
+
+### Results (one seed, 42; Bronze-only, one epoch; greedy, **unguarded** decoding)
+
+Test split, 3,192 cases, Phase 10 evaluator (`artifacts/metrics/eval/19-50-13_debug/`,
+`05-54-44_debug/`):
+
+| System | ZHR [95% CI] | Precision | Coverage | Fact F1 | H1 | H2 | H3 | H8 | **H9** | Critical |
+|---|---|---|---|---|---|---|---|---|---|---|
+| B1 template | 1.000 | 1.000 | 0.853 | 0.920 | 0 | 0 | 0 | 0 | **0.903** | 0 |
+| B2 classifier + template | 1.000 | 0.903 | 0.853 | 0.877 | 0 | 0 | 0 | 1.000 | **0.903** | 0 |
+| S1 | 0.979 [0.974, 0.984] | 0.985 | 0.766 | 0.859 | 0.000 | 0.020 | 0.031 | 0.068 | **0.903** | 0 |
+| A1 | 0.9715 [0.9655, 0.9771] | 0.985 | 0.778 | 0.867 | 0.002 | 0.023 | 0.033 | 0.074 | **0.903** | 0 |
+
+**H9 is identical for all four, on exactly the same 2,882 cases and the same fields**
+(`labels.n_licit_counterparties` 2,732, `labels.focal_is_illicit` 2,685,
+`temporal.burst_detected` 1,482). Not one of the 6,384 S1 and A1 narratives mentions a
+licit counterparty, an absent burst, or the subject's own (un)flagged status: both models
+reproduce Bronze's omissions exactly, as D-104 predicted for Bronze-only training. H9 is
+the dimension on which a trained system could beat the template, and on this corpus no
+trained system can, because nothing in its training data ever states those facts.
+
+**Gate 8 (pilot):** probe supported rate S1 0.99487, A1 0.99490, difference −0.00003,
+tolerance 0.02 → **indistinguishable** (`artifacts/metrics/generator/gate8_pilot_seed42_20261014-1950.json`).
+Both models give their 16 soft tokens ~1/20 of uniform attention, neither changes its
+output when the graph is swapped, and the fusion gate never moved from 0.62. Paired A1 − S1
+on the test split: ZHR −0.0075 [−0.0138, −0.0016], coverage +0.0114 [+0.0085, +0.0142] —
+opposite signs, every |Cliff's δ| ≤ 0.04. D-114 records the consequence and the order in
+which the rest of the matrix runs.
+
+S1's unguarded seed-42 decode is, by the registry's definition, **A5's** row (S1's
+checkpoint decoded with the guard off). The guarded S1 row needs the guard wired into
+decoding, which has not happened yet.
+
+### What this phase did not do
+
+The guard is still not applied at decode. Silver, Gold, B3–B5 and the Method A/B κ are
+unchanged: they need API credentials or annotators. A6 cannot run Qwen3-8B under the
+pinned `transformers==4.45.2` (D-115). One seed is not three.

@@ -140,9 +140,15 @@ def test_a2_uses_the_no_message_passing_control_encoder():
 def test_a5_trains_nothing_and_depends_on_s1():
     a5 = get_system("A5")
     assert a5.trained is False
-    assert a5.guard is False
+    assert a5.guard is True
     assert "S1" in a5.depends_on
-    assert get_system("S1").guard is True
+    assert get_system("S1").guard is False
+
+
+def test_the_guard_is_on_for_a5_alone():
+    """Every main-table comparison is raw against raw; A5 is the one guarded row (D-116)."""
+    guarded = {spec.system_id for spec in all_systems() if spec.guard}
+    assert guarded == {"A5"}
 
 
 def test_a6_uses_a_different_base_model():

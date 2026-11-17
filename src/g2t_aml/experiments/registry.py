@@ -238,7 +238,9 @@ class SystemSpec:
         experiment_config: The Hydra experiment config that reproduces this system.
         training_config: The Hydra training config, or None where nothing is trained.
         trained: Whether this system requires a training run.
-        guard: Whether the Phase 9 inference guard is enabled.
+        guard: Whether the Phase 9 inference guard is enabled. Off by default: every
+            trained arm is reported as the raw model, which is the scientific claim
+            (D-073), and the guard is measured once, by A5 (D-116).
         seeds: Every seed this system runs at. Length 3 for the central-claim systems,
             1 otherwise.
         depends_on: System ids or artifact keys that must complete first.
@@ -260,7 +262,7 @@ class SystemSpec:
     experiment_config: str | None = None
     training_config: str | None = None
     trained: bool = False
-    guard: bool = True
+    guard: bool = False
     seeds: tuple[int, ...] = SEEDS_SINGLE
     depends_on: tuple[str, ...] = ()
     notes: str = ""
@@ -657,7 +659,7 @@ _SYSTEMS: tuple[SystemSpec, ...] = (
     SystemSpec(
         system_id="A5",
         role="Guard contribution",
-        description="S1 evaluated with the inference guard disabled.",
+        description="S1's checkpoint decoded with the inference guard ON.",
         executor=Executor.TRAINED_GENERATOR,
         resource=Resource.GPU_INFERENCE,
         encoder_arm="gatv2",
@@ -669,13 +671,17 @@ _SYSTEMS: tuple[SystemSpec, ...] = (
         experiment_config="matrix_a5",
         training_config="generator",
         trained=False,
-        guard=False,
+        guard=True,
         depends_on=("S1",),
         notes=(
-            "NO TRAINING RUN. A5 is S1's checkpoint decoded with the guard off, which is "
-            "why it depends on S1 and costs an inference pass rather than a training one. "
-            "Guarded and unguarded are two separate table rows and neither is the "
-            "headline on its own (D-073)."
+            "NOTE THE DIRECTION (D-116), as with A4. Every trained arm, S1 included, is "
+            "reported as the raw model -- greedy, unguarded -- because that is the "
+            "scientific claim (D-073) and because every comparison in the main table is "
+            "then raw against raw. A5 is S1's checkpoint decoded WITH the guard: four "
+            "candidates at temperature 0.6, verified, the best selected, one constrained "
+            "repair. NO TRAINING RUN; it costs an inference pass. A5 minus S1 is what the "
+            "guard buys. Guarded and unguarded remain separate rows and neither is the "
+            "headline on its own."
         ),
     ),
     SystemSpec(

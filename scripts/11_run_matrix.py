@@ -149,6 +149,28 @@ def _resolve_paths(substrate: str) -> dict[str, str]:
     }
 
 
+def _run_context(args: argparse.Namespace) -> dict[str, object]:
+    """Assemble the run-invariant context folded into every run's config hash.
+
+    Args:
+        args: The parsed command line.
+
+    Returns:
+        The resolved paths, plus the generator regime, the training root and the
+        decode-only flag -- each only when given, so that a CPU-only invocation keeps the
+        context, and therefore the config hash and completion markers, of the runs it
+        already finished.
+    """
+    context: dict[str, object] = dict(_resolve_paths(args.substrate))
+    if args.generator_override:
+        context["generator_overrides"] = list(args.generator_override)
+    if args.trained_root is not None:
+        context["trained_root"] = str(args.trained_root.resolve())
+    if args.require_trained:
+        context["require_trained"] = True
+    return context
+
+
 def main() -> int:
     """Plan and optionally execute the matrix.
 
@@ -182,6 +204,26 @@ def main() -> int:
     )
     parser.add_argument(
         "--substrate", default="amlworld_hi_small", help="which substrate's corpus to score"
+    )
+    parser.add_argument(
+        "--generator-override",
+        action="append",
+        default=[],
+        help=(
+            "a Hydra override passed to every trained-generator arm (repeatable). It is "
+            "written into the run context and so into every such run's config hash"
+        ),
+    )
+    parser.add_argument(
+        "--trained-root",
+        type=Path,
+        default=None,
+        help="the training queue's root; arms trained there are decoded, not retrained",
+    )
+    parser.add_argument(
+        "--require-trained",
+        action="store_true",
+        help="fail a trained arm that has no checkpoint instead of training it here",
     )
     parser.add_argument(
         "--encoder-arms",
@@ -226,7 +268,7 @@ def main() -> int:
     # Paths come out of `configs/paths/` and never out of a literal here (CLAUDE.md §6).
     # They are folded into every run's config hash, so pointing the matrix at a different
     # corpus invalidates the completion markers rather than silently reusing old numbers.
-    context = _resolve_paths(args.substrate)
+    context = _run_context(args)
     log.info("corpus: %s", context["bronze_path"])
     plan = plan_matrix(specs, root=args.root, overrides=context)
     if plan.problems:
